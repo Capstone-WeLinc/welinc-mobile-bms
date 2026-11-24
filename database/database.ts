@@ -1,6 +1,6 @@
 import * as SQLite from "expo-sqlite";
 
-import { CREATE_TABLES_SQL, DATABASE_NAME, DATABASE_VERSION } from "./tables";
+import { CREATE_TABLES_SQL, DATABASE_NAME, DATABASE_VERSION, POST_SERVICE_RECORDS_COLUMNS_SQL } from "./tables";
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -51,7 +51,47 @@ export async function initializeDatabase(): Promise<SQLite.SQLiteDatabase> {
  */
 const MIGRATIONS: Record<number, (db: SQLite.SQLiteDatabase) => Promise<void>> = {
   1: (db) => execSqlStatements(db, CREATE_TABLES_SQL),
+  2: migrateToVersion2,
+  3: rebuildPostServiceRecordsIfOutdated,
 };
+
+/**
+ * Adds job_orders.downPayment and allows 'XENDIT' as an add-ons payment.
+ * New installs already get both from CREATE_TABLES_SQL in version 1, so each step checks first.
+ */
+async function migrateToVersion2(db: SQLite.SQLiteDatabase): Promise<void> {
+  const jobOrderColumns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(job_orders)");
+  if (!jobOrderColumns.some((column) => column.name === "downPayment")) {
+    await db.execAsync("ALTER TABLE job_orders ADD COLUMN downPayment REAL NOT NULL DEFAULT 0 CHECK (downPayment >= 0)");
+  }
+  await rebuildPostServiceRecordsIfOutdated(db);
+}
+
+/**
+ * SQLite cannot change a CHECK constraint in place, so when post_service_records was created with
+ * older column definitions it is rebuilt from POST_SERVICE_RECORDS_COLUMNS_SQL, keeping its rows.
+ */
+async function rebuildPostServiceRecordsIfOutdated(db: SQLite.SQLiteDatabase): Promise<void> {
+  const postService = await db.getFirstAsync<{ sql: string }>(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'post_service_records'",
+  );
+  if (postService && !postService.sql.includes(POST_SERVICE_RECORDS_COLUMNS_SQL)) {
+    await db.withTransactionAsync(async () => {
+      await db.execAsync(`CREATE TABLE post_service_records_v2 (${POST_SERVICE_RECORDS_COLUMNS_SQL})`);
+      await db.execAsync(
+        `INSERT INTO post_service_records_v2
+          (jobOrderId, serviceCompleted, arrivalTime, addOnKeys, paymentMethod, addOnPayment,
+           completionNotes, issueReported, issueDetails, submittedAt, syncPending)
+         SELECT jobOrderId, serviceCompleted, arrivalTime, addOnKeys, paymentMethod, addOnPayment,
+           completionNotes, issueReported, issueDetails, submittedAt, syncPending
+         FROM post_service_records`,
+      );
+      await db.execAsync("DROP TABLE post_service_records");
+      await db.execAsync("ALTER TABLE post_service_records_v2 RENAME TO post_service_records");
+      await db.execAsync("CREATE INDEX IF NOT EXISTS idx_post_service_syncPending ON post_service_records(syncPending)");
+    });
+  }
+}
 
 export async function createTables(database?: SQLite.SQLiteDatabase): Promise<void> {
   const db = database ?? (await openDatabase());

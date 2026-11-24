@@ -50,9 +50,8 @@ const TABS: Array<{
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("home");
-  // Job order to open directly (set when a booking is tapped on Home).
   const [openJobOrderId, setOpenJobOrderId] = useState<string | null>(null);
-  // Bumped on every tab press so tapping a tab always returns to that page's start.
+  const [fromNotification, setFromNotification] = useState(false);
   const [navKey, setNavKey] = useState(0);
   const user = useUserStore((s) => s.user);
   const unreadCount = useUnreadCount();
@@ -107,14 +106,16 @@ export default function App() {
   }, [setUser]);
 
   /** Switch tabs and open a job order there (details on Job Orders, the form on Post Service). */
-  const openJobOrderIn = (tab: "job-orders" | "forms", jobOrderId: string) => {
+  const openJobOrderIn = (tab: "job-orders" | "forms", jobOrderId: string, { viaNotification = false } = {}) => {
     setOpenJobOrderId(jobOrderId);
+    setFromNotification(viaNotification);
     setActiveTab(tab);
     setNavKey((k) => k + 1);
   };
 
   const goToTab = (key: TabKey) => {
     setOpenJobOrderId(null);
+    setFromNotification(false);
     setActiveTab(key);
     setNavKey((k) => k + 1);
   };
@@ -216,15 +217,27 @@ export default function App() {
           ) : activeTab === "availability" ? (
             <AvailabilityScreen key={navKey} />
           ) : activeTab === "job-orders" ? (
-            <JobOrdersScreen key={navKey} initialJobOrderId={openJobOrderId} />
+            <JobOrdersScreen
+              key={navKey}
+              initialJobOrderId={openJobOrderId}
+              fromNotification={fromNotification}
+              onBackToNotifications={() => goToTab("notifications")}
+            />
           ) : activeTab === "forms" && isDriver ? (
-            <PostServiceScreen key={navKey} initialJobOrderId={openJobOrderId} />
+            <PostServiceScreen
+              key={navKey}
+              initialJobOrderId={openJobOrderId}
+              fromNotification={fromNotification}
+              onBackToNotifications={() => goToTab("notifications")}
+            />
           ) : activeTab === "notifications" ? (
             <NotificationsScreen
               key={navKey}
               onOpenNotification={(notification) => {
                 if (!notification.jobOrderId) return;
-                openJobOrderIn(notification.type === "REMINDER" && isDriver ? "forms" : "job-orders", notification.jobOrderId);
+                openJobOrderIn(notification.type === "REMINDER" && isDriver ? "forms" : "job-orders", notification.jobOrderId, {
+                  viaNotification: true,
+                });
               }}
             />
           ) : (

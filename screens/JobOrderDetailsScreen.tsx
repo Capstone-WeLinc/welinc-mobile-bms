@@ -45,9 +45,11 @@ function Row({ children }: { children: ReactNode }) {
 interface JobOrderDetailsScreenProps {
   jobOrder: JobOrder;
   onBack: () => void;
+  /** Screen reader label of the back button */
+  backLabel?: string;
 }
 
-export function JobOrderDetailsScreen({ jobOrder: jo, onBack }: JobOrderDetailsScreenProps) {
+export function JobOrderDetailsScreen({ jobOrder: jo, onBack, backLabel = "Back to job orders" }: JobOrderDetailsScreenProps) {
   const total = jo.charges.reduce((sum, line) => sum + line.amount, 0);
   const callClient = () => void Linking.openURL(`tel:${jo.contactNumber.replace(/\s/g, "")}`);
 
@@ -60,7 +62,7 @@ export function JobOrderDetailsScreen({ jobOrder: jo, onBack }: JobOrderDetailsS
           onPress={onBack}
           hitSlop={10}
           accessibilityRole="button"
-          accessibilityLabel="Back to job orders"
+          accessibilityLabel={backLabel}
         >
           <ChevronIcon size={16} direction="left" color={COLORS.text} strokeWidth={2.4} />
         </TouchableOpacity>

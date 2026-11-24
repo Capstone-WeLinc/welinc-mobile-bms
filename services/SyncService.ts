@@ -77,6 +77,17 @@ function isJobOrder(value: unknown): value is JobOrder {
 }
 
 /**
+ * The booking's down payment from the server. The BMS booking service stores it as
+ * `downpayment` (decimal text, or null when none); a number is accepted too. Returns 0 when none.
+ */
+function readDownPayment(jobOrder: JobOrder): number {
+  const fields = jobOrder as unknown as Record<string, unknown>;
+  const raw = fields.downPayment ?? fields.downpayment;
+  const amount = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : 0;
+  return Number.isFinite(amount) && amount > 0 ? amount : 0;
+}
+
+/**
  * Two-way sync between bms_mobile.db and the BMS backend, through the suite gateway:
  * 1. upload post-service records saved offline (syncPending = 1),
  * 2. download the team member's job orders and replace the local snapshot.
@@ -163,7 +174,7 @@ class SyncService {
     try {
       const response = await this.api.get<{ jobOrders?: unknown }>(JOB_ORDERS_PATH);
       if (!Array.isArray(response.data?.jobOrders)) throw new Error("The server returned an invalid job order list.");
-      jobOrders = response.data.jobOrders.filter(isJobOrder);
+      jobOrders = response.data.jobOrders.filter(isJobOrder).map((jo) => ({ ...jo, downPayment: readDownPayment(jo) }));
     } catch (error) {
       if (isSessionExpired(error)) throw new SessionExpiredError();
       if (isOffline(error)) return this.offlineResult(uploadErrors);

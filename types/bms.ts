@@ -75,6 +75,7 @@ export type JobOrder = {
   insured: boolean;
   paymentMethod: string;
   charges: ChargeLine[];
+  downPayment: number;
 };
 
 export type Weekday =
@@ -108,10 +109,10 @@ export type AddOn = {
   price: number;
 };
 
-export type PaymentMethod = "CASH" | "GCASH" | "BANK_TRANSFER";
+export type PaymentMethod = "CASH" | "GCASH" | "BANK_TRANSFER" | "XENDIT";
 
 /** How the add-ons availed during the trip were (or will be) paid. */
-export type AddOnPayment = "COD" | "GCASH" | "BANK_TRANSFER" | "UNPAID";
+export type AddOnPayment = "COD" | "GCASH" | "BANK_TRANSFER" | "XENDIT" | "UNPAID";
 
 /** What the driver/helper submits after a service is done. */
 export type PostServiceRecord = {
