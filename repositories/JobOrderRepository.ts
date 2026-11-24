@@ -45,8 +45,8 @@ export class JobOrderRepository {
         (id, jobOrderNumber, bookingNumber, status, postServiceFormSubmitted, clientName, contactNumber,
          date, pickupTime, dispatchTime, driverId, driverName, helperIds, helperNames, garage, vehicle,
          pickupArea, pickupAddress, deliveryArea, deliveryAddress, estimatedItems, itemDescription,
-         customerInstruction, insured, paymentMethod, charges, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         customerInstruction, insured, paymentMethod, charges, downPayment, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          jobOrderNumber = excluded.jobOrderNumber,
          bookingNumber = excluded.bookingNumber,
@@ -73,6 +73,7 @@ export class JobOrderRepository {
          insured = excluded.insured,
          paymentMethod = excluded.paymentMethod,
          charges = excluded.charges,
+         downPayment = excluded.downPayment,
          updatedAt = excluded.updatedAt`,
       jo.id,
       jo.jobOrderNumber,
@@ -100,6 +101,7 @@ export class JobOrderRepository {
       jo.insured ? 1 : 0,
       jo.paymentMethod,
       JSON.stringify(jo.charges),
+      jo.downPayment,
       updatedAt,
     );
   }
@@ -133,5 +135,6 @@ function toJobOrder(row: JobOrderRow): JobOrder {
     insured: row.insured === 1,
     paymentMethod: row.paymentMethod,
     charges: parseJson<ChargeLine[]>(row.charges, []),
+    downPayment: row.downPayment ?? 0,
   };
 }

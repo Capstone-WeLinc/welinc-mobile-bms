@@ -16,7 +16,7 @@ import { useKeyboardHeight } from "../hooks/useKeyboardHeight";
 import { ADD_ONS } from "../seeders/addOns";
 import { ADD_ON_PAYMENTS, PAYMENT_METHODS, toPaymentMethod } from "../seeders/payments";
 import type { AddOnPayment, JobOrder, PaymentMethod, PostServiceRecord } from "../types/bms";
-import { formatPeso } from "../utils/money";
+import { formatPeso, getPaymentBreakdown } from "../utils/money";
 
 type FieldKey = "arrival" | "notes" | "issue";
 
@@ -54,10 +54,19 @@ interface PostServiceFormScreenProps {
   /** Previously submitted record, if any, to edit */
   existingRecord?: PostServiceRecord;
   onSubmit: (record: PostServiceRecord) => Promise<void>;
+  /** Back button and Android back. Goes to the list, or to Notifications when opened from one. */
   onBack: () => void;
+  /** Screen reader label of the back button */
+  backLabel?: string;
 }
 
-export function PostServiceFormScreen({ jobOrder, existingRecord, onSubmit, onBack }: PostServiceFormScreenProps) {
+export function PostServiceFormScreen({
+  jobOrder,
+  existingRecord,
+  onSubmit,
+  onBack,
+  backLabel = "Back to post service list",
+}: PostServiceFormScreenProps) {
   const initialTime = splitTime(existingRecord?.arrivalTime);
   const [serviceCompleted, setServiceCompleted] = useState(existingRecord?.serviceCompleted ?? false);
   const [hour, setHour] = useState(initialTime.hour);
@@ -113,6 +122,8 @@ export function PostServiceFormScreen({ jobOrder, existingRecord, onSubmit, onBa
 
   const bookingTotal = jobOrder.charges.reduce((sum, line) => sum + line.amount, 0);
   const addOnsTotal = ADD_ONS.filter((a) => addOnKeys.includes(a.key)).reduce((sum, a) => sum + a.price, 0);
+  const payment = getPaymentBreakdown(bookingTotal + addOnsTotal, jobOrder.downPayment);
+  const peso = (amount: number) => formatPeso(amount, { alwaysShowCents: true });
   const arrivalTime = toTime24(hour, minute, period);
   const timeTouched = hour !== "" || minute !== "";
 
@@ -157,7 +168,7 @@ export function PostServiceFormScreen({ jobOrder, existingRecord, onSubmit, onBa
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back to post service list">
+        <TouchableOpacity style={styles.backButton} onPress={onBack} hitSlop={10} accessibilityRole="button" accessibilityLabel={backLabel}>
           <ChevronIcon size={16} direction="left" color={COLORS.text} strokeWidth={2.4} />
         </TouchableOpacity>
         <View style={styles.headerText}>
@@ -188,12 +199,32 @@ export function PostServiceFormScreen({ jobOrder, existingRecord, onSubmit, onBa
               <Text style={styles.summaryValue}>{jobOrder.contactNumber}</Text>
             </View>
           </View>
-          <View>
-            <Text style={styles.summaryLabel}>Estimated Total</Text>
-            <Text style={styles.summaryTotal}>{formatPeso(bookingTotal + addOnsTotal, { alwaysShowCents: true })}</Text>
-            {addOnsTotal > 0 ? (
-              <Text style={styles.summaryHint}>Includes {formatPeso(addOnsTotal, { alwaysShowCents: true })} in add-ons</Text>
-            ) : null}
+          <View style={styles.payment} accessibilityLabel="Payment summary">
+            <View style={styles.paymentRow}>
+              <View style={styles.paymentLabelCol}>
+                <Text style={styles.paymentLabel}>Total Service Amount</Text>
+                <Text style={styles.summaryHint}>
+                  {addOnsTotal > 0 ? `Full cost of the service, incl. ${peso(addOnsTotal)} in add-ons` : "Full cost of the service"}
+                </Text>
+              </View>
+              <Text style={styles.paymentValue}>{peso(payment.totalAmount)}</Text>
+            </View>
+            <View style={styles.paymentRow}>
+              <View style={styles.paymentLabelCol}>
+                <Text style={styles.paymentLabel}>Down Payment</Text>
+                <Text style={styles.summaryHint}>Already paid by the client</Text>
+              </View>
+              <Text style={styles.paymentValue}>{peso(payment.downPayment)}</Text>
+            </View>
+            <View style={[styles.paymentRow, styles.paymentBalanceRow]}>
+              <View style={styles.paymentLabelCol}>
+                <Text style={styles.paymentBalanceLabel}>Remaining Balance</Text>
+                <Text style={styles.summaryHint}>
+                  {payment.remainingBalance === 0 ? "Fully paid" : "Still to be paid by the client"}
+                </Text>
+              </View>
+              <Text style={styles.summaryTotal}>{peso(payment.remainingBalance)}</Text>
+            </View>
           </View>
         </View>
 
@@ -443,6 +474,14 @@ const styles = StyleSheet.create({
   summaryValue: { fontSize: 16, fontWeight: "800", color: COLORS.navy },
   summaryTotal: { fontSize: 20, fontWeight: "800", color: COLORS.navy },
   summaryHint: { fontSize: 13, color: COLORS.muted, marginTop: 2 },
+
+  payment: { gap: 10, paddingTop: 12, borderTopWidth: 1, borderTopColor: "#d7dbe7" },
+  paymentRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
+  paymentLabelCol: { flex: 1 },
+  paymentLabel: { fontSize: 15, fontWeight: "700", color: COLORS.navy },
+  paymentValue: { fontSize: 16, fontWeight: "800", color: COLORS.navy },
+  paymentBalanceRow: { paddingTop: 10, borderTopWidth: 1, borderTopColor: "#d7dbe7" },
+  paymentBalanceLabel: { fontSize: 16, fontWeight: "800", color: COLORS.navy },
 
   savedBanner: { marginTop: 12, backgroundColor: COLORS.navySoft, borderRadius: 10, padding: 12 },
   savedBannerText: { color: COLORS.navy, fontSize: 14, fontWeight: "600" },

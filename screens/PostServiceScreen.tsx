@@ -46,10 +46,13 @@ function CardFooter({ jobOrder, onEdit }: { jobOrder: JobOrder; onEdit: () => vo
 interface PostServiceScreenProps {
   /** Open this job order's form right away (e.g. from a reminder notification). Only ongoing jobs open. */
   initialJobOrderId?: string | null;
+  /** True when initialJobOrderId was opened from a notification: Back on its form returns to Notifications. */
+  fromNotification?: boolean;
+  onBackToNotifications?: () => void;
   onLoadingChange?: (loading: boolean) => void;
 }
 
-export function PostServiceScreen({ initialJobOrderId, onLoadingChange }: PostServiceScreenProps) {
+export function PostServiceScreen({ initialJobOrderId, fromNotification = false, onBackToNotifications, onLoadingChange }: PostServiceScreenProps) {
   const jobOrders = useMyJobOrders();
   const records = useJobOrdersStore((s) => s.postServiceRecords);
   const refreshJobOrders = useJobOrdersStore((s) => s.refresh);
@@ -59,6 +62,9 @@ export function PostServiceScreen({ initialJobOrderId, onLoadingChange }: PostSe
   const [date, setDate] = useState<DateFilter>({ kind: "ALL" });
   const [editingId, setEditingId] = useState<string | null>(() =>
     initialJobOrderId && jobOrders.find((jo) => jo.id === initialJobOrderId)?.status === "ONGOING" ? initialJobOrderId : null,
+  );
+  const [notificationEntryId, setNotificationEntryId] = useState<string | null>(() =>
+    fromNotification ? (initialJobOrderId ?? null) : null,
   );
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -78,19 +84,23 @@ export function PostServiceScreen({ initialJobOrderId, onLoadingChange }: PostSe
 
   const openForm = (id: string) => {
     setSavedMessage(null);
+    setNotificationEntryId(null);
     setEditingId(id);
   };
 
   const editing = editingId ? jobOrders.find((jo) => jo.id === editingId) : undefined;
   if (editing) {
+    const returnsToNotifications = editing.id === notificationEntryId && !!onBackToNotifications;
     return (
       <PostServiceFormScreen
         key={editing.id}
         jobOrder={editing}
         existingRecord={records[editing.id]}
-        onBack={() => setEditingId(null)}
+        onBack={returnsToNotifications ? () => onBackToNotifications?.() : () => setEditingId(null)}
+        backLabel={returnsToNotifications ? "Back to notifications" : undefined}
         onSubmit={async (record) => {
           await saveRecord(record);
+          setNotificationEntryId(null);
           setEditingId(null);
           setSavedMessage(`Post-service record submitted. ${editing.jobOrderNumber} is now Done.`);
         }}

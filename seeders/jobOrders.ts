@@ -44,15 +44,16 @@ type Row = {
   items?: number;
   description?: string;
   instruction?: string;
+  downPayment?: number;
 };
 
 const ROWS: Row[] = [
-  { days: -5, time: "08:00", client: "Reyes Hardware", from: "bagumbong", to: "ortigas", status: "COMPLETED", items: 45, description: "Hardware supplies, Paint cans", payment: "Bank Transfer" },
+  { days: -5, time: "08:00", client: "Reyes Hardware", from: "bagumbong", to: "ortigas", status: "COMPLETED", items: 45, description: "Hardware supplies, Paint cans", payment: "Bank Transfer", downPayment: 8790 },
   { days: -4, time: "09:30", client: "Lim Electronics", from: "makati", to: "manila", status: "COMPLETED", vehicleIndex: 1, items: 12, description: "Appliances, Boxed electronics" },
   { days: -3, time: "13:00", client: "Garcia Furniture", from: "valenzuela", to: "malabon", status: "COMPLETED", vehicleIndex: 2, items: 18, description: "Sofa set, Dining table" },
   { days: -1, time: "07:30", client: "Santos Trading", from: "marikinaHeights", to: "smNorth", status: "COMPLETED", items: 60, description: "Dry goods, Sacks of rice", insured: false, payment: "Cash" },
   { days: 0, time: "08:00", client: "Dela Rosa Foods", from: "pasay", to: "paranaque", status: "COMPLETED", vehicleIndex: 1, items: 25, description: "Frozen goods (insulated boxes)", instruction: "Keep boxes upright; deliver to the back entrance." },
-  { days: 0, time: "10:00", client: "Santos Trading", from: "marikinaHeights", to: "smNorth", status: "ONGOING", items: 40, description: "Dry goods, Canned products", instruction: "Coordinate with the loading bay guard before unloading." },
+  { days: 0, time: "10:00", client: "Santos Trading", from: "marikinaHeights", to: "smNorth", status: "ONGOING", items: 40, description: "Dry goods, Canned products", instruction: "Coordinate with the loading bay guard before unloading.", downPayment: 3000 },
   { days: 0, time: "14:00", client: "Santos Trading", from: "marikinaHeights", to: "smNorth", status: "PENDING", items: 35, description: "Dry goods, Beverages" },
   { days: 0, time: "17:00", client: "Test 4", from: "rainbow", to: "langit", status: "PENDING", items: 30, description: "Fragile items, Furniture", instruction: "Parked infront the gate, handle the items with care", payment: "GCash" },
   { days: 1, time: "09:00", client: "Villanueva Builders", from: "antipolo", to: "ortigas", status: "PENDING", vehicleIndex: 2, items: 80, description: "Construction materials, Tiles" },
@@ -115,6 +116,7 @@ export function getSeederJobOrders(today = new Date()): JobOrder[] {
       insured,
       paymentMethod: row.payment ?? "GCash",
       charges,
+      downPayment: row.downPayment ?? 0,
     };
   });
 }

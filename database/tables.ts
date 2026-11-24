@@ -1,5 +1,5 @@
 export const DATABASE_NAME = "bms_mobile.db";
-export const DATABASE_VERSION = 1;
+export const DATABASE_VERSION = 3;
 
 // Row shapes as stored in SQLite. Booleans are 0/1 and arrays/objects are JSON text.
 // Repositories convert these to and from the app types in types/bms.ts.
@@ -31,6 +31,7 @@ export interface JobOrderRow {
   insured: number;
   paymentMethod: string;
   charges: string;
+  downPayment: number;
   updatedAt: string;
 }
 
@@ -85,6 +86,24 @@ export interface NotificationRow {
   readSyncPending: number;
 }
 
+/**
+ * Column definitions of post_service_records. Shared with the migrations, which rebuild the
+ * table whenever its stored definition differs from this one (SQLite can't alter a CHECK).
+ */
+export const POST_SERVICE_RECORDS_COLUMNS_SQL = `
+    jobOrderId TEXT PRIMARY KEY NOT NULL,
+    serviceCompleted INTEGER NOT NULL CHECK (serviceCompleted IN (0, 1)),
+    arrivalTime TEXT NOT NULL,
+    addOnKeys TEXT NOT NULL DEFAULT '[]',
+    paymentMethod TEXT NOT NULL CHECK (paymentMethod IN ('CASH', 'GCASH', 'BANK_TRANSFER', 'XENDIT')),
+    addOnPayment TEXT CHECK (addOnPayment IS NULL OR addOnPayment IN ('COD', 'GCASH', 'BANK_TRANSFER', 'XENDIT', 'UNPAID')),
+    completionNotes TEXT NOT NULL DEFAULT '',
+    issueReported INTEGER NOT NULL DEFAULT 0 CHECK (issueReported IN (0, 1)),
+    issueDetails TEXT NOT NULL DEFAULT '',
+    submittedAt TEXT NOT NULL,
+    syncPending INTEGER NOT NULL DEFAULT 1 CHECK (syncPending IN (0, 1))
+`;
+
 // This SQL contains no user input. Values are always written with bound parameters.
 //
 // `syncPending` marks rows written on the phone that the BMS backend has not
@@ -117,24 +136,13 @@ export const CREATE_TABLES_SQL = `
     insured INTEGER NOT NULL DEFAULT 0 CHECK (insured IN (0, 1)),
     paymentMethod TEXT NOT NULL DEFAULT '',
     charges TEXT NOT NULL DEFAULT '[]',
+    downPayment REAL NOT NULL DEFAULT 0 CHECK (downPayment >= 0),
     updatedAt TEXT NOT NULL
   );
 
   -- No foreign key to job_orders on purpose: a record still waiting to sync must
   -- survive even if its job order drops out of the latest server snapshot.
-  CREATE TABLE IF NOT EXISTS post_service_records (
-    jobOrderId TEXT PRIMARY KEY NOT NULL,
-    serviceCompleted INTEGER NOT NULL CHECK (serviceCompleted IN (0, 1)),
-    arrivalTime TEXT NOT NULL,
-    addOnKeys TEXT NOT NULL DEFAULT '[]',
-    paymentMethod TEXT NOT NULL CHECK (paymentMethod IN ('CASH', 'GCASH', 'BANK_TRANSFER')),
-    addOnPayment TEXT CHECK (addOnPayment IN ('COD', 'GCASH', 'BANK_TRANSFER', 'UNPAID', NULL)),
-    completionNotes TEXT NOT NULL DEFAULT '',
-    issueReported INTEGER NOT NULL DEFAULT 0 CHECK (issueReported IN (0, 1)),
-    issueDetails TEXT NOT NULL DEFAULT '',
-    submittedAt TEXT NOT NULL,
-    syncPending INTEGER NOT NULL DEFAULT 1 CHECK (syncPending IN (0, 1))
-  );
+  CREATE TABLE IF NOT EXISTS post_service_records (${POST_SERVICE_RECORDS_COLUMNS_SQL});
 
   CREATE TABLE IF NOT EXISTS weekly_availability (
     userId TEXT PRIMARY KEY NOT NULL,
