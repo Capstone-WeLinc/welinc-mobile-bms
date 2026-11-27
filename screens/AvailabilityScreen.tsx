@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -65,9 +66,11 @@ const EMPTY_LEAVE = { leaveType: null as LeaveType | null, startDate: null as st
 export function AvailabilityScreen() {
   // Weekly availability
   const user = useCurrentUser();
-  const savedAvailability = useMyWeeklyAvailability(user);
+  const { availability: savedAvailability, isSet: availabilitySet } = useMyWeeklyAvailability(user);
   const saveWeekly = useAvailabilityStore((s) => s.saveWeekly);
   const submitLeaveRequest = useAvailabilityStore((s) => s.submitLeave);
+  const loadAvailability = useAvailabilityStore((s) => s.loadForUser);
+  const [refreshing, setRefreshing] = useState(false);
   const [draftAvailability, setDraftAvailability] = useState<WeeklyAvailability>(savedAvailability);
   const [editing, setEditing] = useState(false);
   const [availabilityMessage, setAvailabilityMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -91,7 +94,8 @@ export function AvailabilityScreen() {
   }, [keyboardHeight]);
 
   const shown = editing ? draftAvailability : savedAvailability;
-  const hasChanges = WEEKDAYS.some(({ key }) => draftAvailability[key] !== savedAvailability[key]);
+  // The first save always counts as a change, even if the days picked match the empty start.
+  const hasChanges = !availabilitySet || WEEKDAYS.some(({ key }) => draftAvailability[key] !== savedAvailability[key]);
 
   const toggleDay = (day: Weekday) => {
     setDraftAvailability((current) => ({ ...current, [day]: !current[day] }));
@@ -158,6 +162,18 @@ export function AvailabilityScreen() {
   const weekdayRows = WEEKDAYS.slice(0, 6);
   const sunday = WEEKDAYS[6];
 
+  /** Pull to refresh: reload the saved availability and leave requests (on this phone until the BMS backend has routes). */
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await loadAvailability(user.id);
+    } catch (error) {
+      console.warn("[Availability] Refresh failed", error);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
     <View style={styles.flex}>
       <ScrollView
@@ -165,6 +181,9 @@ export function AvailabilityScreen() {
         style={styles.scroll}
         contentContainerStyle={[styles.content, keyboardHeight > 0 && { paddingBottom: keyboardHeight + 16 }]}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} colors={[COLORS.navy, COLORS.gold]} tintColor={COLORS.navy} />
+        }
       >
         <MobilePageHeader
           title="Set Availability"
@@ -190,6 +209,10 @@ export function AvailabilityScreen() {
               fullWidth
             />
           </View>
+
+          {!availabilitySet && !editing && !availabilityMessage ? (
+            <Text style={styles.noticeText}>You haven't set your availability yet. Tap Edit to choose your days.</Text>
+          ) : null}
 
           {availabilityMessage ? (
             <Text style={availabilityMessage.type === "success" ? styles.successText : styles.errorText}>
@@ -433,5 +456,6 @@ const styles = StyleSheet.create({
   submitButton: { flex: 0 },
 
   successText: { color: COLORS.success, fontSize: 15, fontWeight: "700", marginTop: 12 },
+  noticeText: { color: COLORS.muted, fontSize: 15, fontWeight: "600", marginTop: 12 },
   errorText: { color: COLORS.danger, fontSize: 15, fontWeight: "700", marginTop: 12 },
 });

@@ -28,6 +28,7 @@ import { useAvailabilityStore } from "./stores/availabilityStore";
 import { useJobOrdersStore } from "./stores/jobOrdersStore";
 import { useUserStore } from "./stores/userStore";
 import { useNotificationsStore, useUnreadCount } from "./stores/notificationsStore";
+import type { ProfileField } from "./types/bms";
 
 type TabKey = "home" | "availability" | "job-orders" | "forms" | "notifications" | "profile";
 
@@ -52,6 +53,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>("home");
   const [openJobOrderId, setOpenJobOrderId] = useState<string | null>(null);
   const [fromNotification, setFromNotification] = useState(false);
+  /** The profile field a tapped notification was about (Profile scrolls to and highlights it). */
+  const [profileFocus, setProfileFocus] = useState<ProfileField | null>(null);
   const [navKey, setNavKey] = useState(0);
   const user = useUserStore((s) => s.user);
   const unreadCount = useUnreadCount();
@@ -113,7 +116,17 @@ export default function App() {
     setNavKey((k) => k + 1);
   };
 
+  /** Open Profile at the field a notification was about. */
+  const openProfileAt = (field: ProfileField) => {
+    setOpenJobOrderId(null);
+    setFromNotification(true);
+    setProfileFocus(field);
+    setActiveTab("profile");
+    setNavKey((k) => k + 1);
+  };
+
   const goToTab = (key: TabKey) => {
+    setProfileFocus(null);
     setOpenJobOrderId(null);
     setFromNotification(false);
     setActiveTab(key);
@@ -234,6 +247,10 @@ export default function App() {
             <NotificationsScreen
               key={navKey}
               onOpenNotification={(notification) => {
+                if (notification.profileField) {
+                  openProfileAt(notification.profileField);
+                  return;
+                }
                 if (!notification.jobOrderId) return;
                 openJobOrderIn(notification.type === "REMINDER" && isDriver ? "forms" : "job-orders", notification.jobOrderId, {
                   viaNotification: true,
@@ -241,7 +258,11 @@ export default function App() {
               }}
             />
           ) : (
-            <ProfileScreen key={navKey} />
+            <ProfileScreen
+              key={navKey}
+              focusField={profileFocus}
+              onBackToNotifications={fromNotification ? () => goToTab("notifications") : undefined}
+            />
           )}
         </SafeAreaView>
       </SafeAreaView>

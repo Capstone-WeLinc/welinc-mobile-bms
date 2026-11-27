@@ -65,7 +65,7 @@ function NotificationRow({ notification, onPress }: { notification: AppNotificat
 }
 
 interface NotificationsScreenProps {
-  /** Called when a notification about a job order is tapped. */
+  /** Called when a notification about a job order or a profile change is tapped. */
   onOpenNotification: (notification: AppNotification) => void;
   onLoadingChange?: (loading: boolean) => void;
 }
@@ -97,7 +97,7 @@ export function NotificationsScreen({ onOpenNotification, onLoadingChange }: Not
 
   const open = (notification: AppNotification) => {
     markRead(notification.id);
-    if (notification.jobOrderId) onOpenNotification(notification);
+    if (notification.jobOrderId || notification.profileField) onOpenNotification(notification);
   };
 
   const renderSection = (title: string, items: AppNotification[]) =>

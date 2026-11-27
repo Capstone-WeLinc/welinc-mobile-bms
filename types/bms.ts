@@ -138,6 +138,9 @@ export type NotificationType = "ASSIGNMENT" | "SCHEDULE_CHANGE" | "REMINDER" | "
 /** A piece of notification text; bold pieces are highlighted. */
 export type NotificationTextPart = { text: string; bold?: boolean };
 
+/** The part of the profile an account notification is about. */
+export type ProfileField = "name" | "email" | "contact" | "password";
+
 export type AppNotification = {
   id: string;
   type: NotificationType;
@@ -151,4 +154,6 @@ export type AppNotification = {
   jobOrderId?: string;
   /** Only shown to drivers (e.g. post-service reminders) */
   driversOnly?: boolean;
+  /** Account notifications about a profile change: tapping opens Profile at this field */
+  profileField?: ProfileField;
 };

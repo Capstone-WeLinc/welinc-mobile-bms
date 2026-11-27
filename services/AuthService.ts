@@ -259,6 +259,15 @@ export class AuthService {
     return (await this.loadProfile(storedUser)) ?? storedUser;
   }
 
+  /**
+   * Reload the signed-in person's profile from the server (pull to refresh). Keeps `current` when
+   * the server can't be reached; throws SessionExpiredError when the session has ended.
+   */
+  async refreshProfile(current: TeamMember): Promise<TeamMember> {
+    if (USE_SEEDER_AUTH) return current;
+    return (await this.loadProfile(current)) ?? current;
+  }
+
   getAccessToken(): Promise<string | null> {
     return SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
   }

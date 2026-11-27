@@ -15,10 +15,12 @@ interface FormFieldProps extends Omit<TextInputProps, "style" | "onFocus" | "onB
   onInputBlur?: () => void;
   /** Hide the text and show an eye button to reveal it (for passwords). */
   password?: boolean;
+  /** Gold outline, e.g. the field a notification was about. */
+  highlighted?: boolean;
 }
 
 /** Uppercase label + input + optional error, matching the app's form style. */
-export function FormField({ label, required, error, readOnly, onInputFocus, onInputBlur, password, ...inputProps }: FormFieldProps) {
+export function FormField({ label, required, error, readOnly, onInputFocus, onInputBlur, password, highlighted, ...inputProps }: FormFieldProps) {
   const inputRef = useRef<TextInput>(null);
   const [revealed, setRevealed] = useState(false);
   return (
@@ -30,7 +32,7 @@ export function FormField({ label, required, error, readOnly, onInputFocus, onIn
       <View>
         <TextInput
           ref={inputRef}
-          style={[styles.input, password && styles.inputWithToggle, readOnly && styles.inputReadOnly, error ? styles.inputError : null]}
+          style={[styles.input, password && styles.inputWithToggle, readOnly && styles.inputReadOnly, highlighted && styles.inputHighlighted, error ? styles.inputError : null]}
           editable={!readOnly}
           placeholderTextColor={COLORS.faint}
           accessibilityLabel={label}
@@ -80,6 +82,7 @@ const styles = StyleSheet.create({
   inputWithToggle: { paddingRight: 54 },
   toggle: { position: "absolute", right: 0, top: 0, bottom: 0, width: 52, alignItems: "center", justifyContent: "center" },
   inputReadOnly: { backgroundColor: "#e9ecf2", color: COLORS.muted },
+  inputHighlighted: { borderColor: COLORS.gold, borderWidth: 2, backgroundColor: "#fdf6e3" },
   inputError: { borderColor: COLORS.danger, borderWidth: 1.5 },
   error: { color: COLORS.danger, fontSize: 14, fontWeight: "600", marginTop: 6 },
 });

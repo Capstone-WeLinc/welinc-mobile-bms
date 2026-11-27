@@ -1,8 +1,10 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 
 import type { NotificationRow } from "../database/tables";
-import type { AppNotification, NotificationTextPart, NotificationType } from "../types/bms";
+import type { AppNotification, NotificationTextPart, NotificationType, ProfileField } from "../types/bms";
 import { parseJson } from "./json";
+
+const PROFILE_FIELDS: ProfileField[] = ["name", "email", "contact", "password"];
 
 export class NotificationRepository {
   constructor(private readonly db: SQLiteDatabase) {}
@@ -29,8 +31,8 @@ export class NotificationRepository {
       for (const n of notifications) {
         await this.db.runAsync(
           `INSERT INTO notifications
-            (id, userId, type, actorName, message, createdAt, read, jobOrderId, driversOnly, readSyncPending)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            (id, userId, type, actorName, message, createdAt, read, jobOrderId, driversOnly, readSyncPending, profileField)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
            ON CONFLICT(userId, id) DO UPDATE SET
              type = excluded.type,
              actorName = excluded.actorName,
@@ -38,7 +40,8 @@ export class NotificationRepository {
              createdAt = excluded.createdAt,
              read = MAX(notifications.read, excluded.read),
              jobOrderId = excluded.jobOrderId,
-             driversOnly = excluded.driversOnly`,
+             driversOnly = excluded.driversOnly,
+             profileField = excluded.profileField`,
           n.id,
           userId,
           n.type,
@@ -48,6 +51,7 @@ export class NotificationRepository {
           n.read ? 1 : 0,
           n.jobOrderId ?? null,
           n.driversOnly ? 1 : 0,
+          n.profileField ?? null,
         );
         await this.db.runAsync("INSERT OR IGNORE INTO incoming_notification_ids (id) VALUES (?)", n.id);
       }
@@ -89,5 +93,8 @@ function toNotification(row: NotificationRow): AppNotification {
   };
   if (row.jobOrderId) notification.jobOrderId = row.jobOrderId;
   if (row.driversOnly === 1) notification.driversOnly = true;
+  if (row.profileField && PROFILE_FIELDS.includes(row.profileField as ProfileField)) {
+    notification.profileField = row.profileField as ProfileField;
+  }
   return notification;
 }

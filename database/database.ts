@@ -53,7 +53,16 @@ const MIGRATIONS: Record<number, (db: SQLite.SQLiteDatabase) => Promise<void>> =
   1: (db) => execSqlStatements(db, CREATE_TABLES_SQL),
   2: migrateToVersion2,
   3: rebuildPostServiceRecordsIfOutdated,
+  4: addNotificationProfileField,
 };
+
+/** Adds notifications.profileField (which profile field an account notification opens). */
+async function addNotificationProfileField(db: SQLite.SQLiteDatabase): Promise<void> {
+  const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(notifications)");
+  if (!columns.some((c) => c.name === "profileField")) {
+    await db.execAsync("ALTER TABLE notifications ADD COLUMN profileField TEXT");
+  }
+}
 
 /**
  * Adds job_orders.downPayment and allows 'XENDIT' as an add-ons payment.
