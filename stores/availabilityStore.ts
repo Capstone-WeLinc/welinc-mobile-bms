@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { getDatabase } from "../database/database";
-import { getSeederAvailability } from "../seeders/availability";
+import { NO_DAYS_SELECTED } from "../seeders/availability";
 import { AvailabilityRepository } from "../repositories/AvailabilityRepository";
 import type { TeamMember, LeaveRequest, WeeklyAvailability } from "../types/bms";
 
@@ -49,8 +49,11 @@ export const useAvailabilityStore = create<AvailabilityState>((set, get) => ({
   },
 }));
 
-/** The signed-in user's saved weekly availability (seeder data until they save their own). */
-export function useMyWeeklyAvailability(user: TeamMember): WeeklyAvailability {
+/**
+ * The signed-in user's saved weekly availability. Until they save their own, no days are picked
+ * and `isSet` is false: the app never chooses days for them.
+ */
+export function useMyWeeklyAvailability(user: TeamMember): { availability: WeeklyAvailability; isSet: boolean } {
   const saved = useAvailabilityStore((s) => s.weeklyByUser[user.id]);
-  return saved ?? getSeederAvailability(user);
+  return { availability: saved ?? NO_DAYS_SELECTED, isSet: Boolean(saved) };
 }

@@ -1,31 +1,29 @@
-import { useState } from "react";
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 
-import { CheckIcon } from "../components/BmsIcons";
+import { CheckIcon, ChevronIcon } from "../components/BmsIcons";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { FormField } from "../components/FormField";
 import { MobilePageHeader } from "../components/MobilePageHeader";
+import { PhoneField } from "../components/PhoneField";
 import { COLORS } from "../constants/colors";
 import { useKeyboardAwareScroll } from "../hooks/useKeyboardAwareScroll";
 import { useCurrentUser, useUserStore } from "../stores/userStore";
-import type { TeamMember } from "../types/bms";
-import { MONTH_NAMES, fromDateKey } from "../utils/dates";
+import type { ProfileField, TeamMember } from "../types/bms";
 import { PASSWORD_RULES, meetsPasswordRules } from "../utils/passwordRules";
-import { formatPhMobile, normalizePhMobile } from "../utils/phone";
+import { formatPhMobile, isValidPhLocal, phLocalDigits } from "../utils/phone";
 
 const ROLE_LABELS: Record<TeamMember["role"], string> = { driver: "Driver", helper: "Helper" };
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const INVALID_PHONE = "Enter a valid Philippine mobile number.";
+/** How long the field a notification was about stays highlighted. */
+const HIGHLIGHT_MS = 6000;
 
 type Message = { type: "success" | "error"; text: string } | null;
 
 function initials(user: TeamMember): string {
   return `${user.firstName[0] ?? ""}${user.lastName.split(/\s+/).map((p) => p[0]).join("")}`.slice(0, 3).toUpperCase();
-}
-
-function formatJoined(dateKey: string): string {
-  const d = fromDateKey(dateKey);
-  return `${MONTH_NAMES[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
 
 function WarningIcon() {
@@ -47,15 +45,24 @@ const profileFormFrom = (user: TeamMember) => ({
   firstName: user.firstName,
   lastName: user.lastName,
   email: user.email,
-  phone: formatPhMobile(user.phone),
+  /** The 10 digits after +63 ("" when there is no number on record). */
+  phone: phLocalDigits(user.phone),
 });
 
 const EMPTY_PASSWORDS = { current: "", next: "", confirm: "" };
 
-export function ProfileScreen() {
+interface ProfileScreenProps {
+  /** Opened from a notification about this field: scroll to it and highlight it for a few seconds. */
+  focusField?: ProfileField | null;
+  /** Shows a "Back to notifications" link (when opened from a notification). */
+  onBackToNotifications?: () => void;
+}
+
+export function ProfileScreen({ focusField = null, onBackToNotifications }: ProfileScreenProps) {
   const user = useCurrentUser();
   const signOut = useUserStore((s) => s.signOut);
   const updateProfile = useUserStore((s) => s.updateProfile);
+  const refreshProfile = useUserStore((s) => s.refreshProfile);
   const changePassword = useUserStore((s) => s.changePassword);
   const requestAccountDeletion = useUserStore((s) => s.requestAccountDeletion);
   const deletionRequested = useUserStore((s) => s.deletionRequested);
@@ -63,18 +70,41 @@ export function ProfileScreen() {
   const keyboard = useKeyboardAwareScroll();
   const fieldFocus = { onInputFocus: keyboard.onInputFocus, onInputBlur: keyboard.onInputBlur };
 
-  const [confirm, setConfirm] = useState<"signOut" | "delete" | null>(null);
+  const [confirm, setConfirm] = useState<"logOut" | "delete" | null>(null);
   const [deletionMessage, setDeletionMessage] = useState<Message>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // ----- Personal details -----
+  // ----- Opened from a notification -----
+  const [highlight, setHighlight] = useState<ProfileField | null>(focusField);
+  const scrolledToFocus = useRef(false);
+
+  /** Scroll the card holding the notification's field to the top, once, after it is laid out. */
+  const scrollToCard = (y: number) => {
+    if (scrolledToFocus.current) return;
+    scrolledToFocus.current = true;
+    requestAnimationFrame(() => keyboard.scrollRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true }));
+  };
+
+  useEffect(() => {
+    if (!focusField) return;
+    const timer = setTimeout(() => setHighlight(null), HIGHLIGHT_MS);
+    return () => clearTimeout(timer);
+  }, [focusField]);
+
+  // ----- Personal details (locked until Edit is tapped) -----
+  const [editing, setEditing] = useState(false);
   const [profile, setProfile] = useState(() => profileFormFrom(user));
   const [profileTried, setProfileTried] = useState(false);
   const [profileMessage, setProfileMessage] = useState<Message>(null);
   const [profileSaving, setProfileSaving] = useState(false);
 
+  // Show the newest saved details (e.g. after pull to refresh) unless the person is editing.
+  useEffect(() => {
+    if (!editing) setProfile(profileFormFrom(user));
+  }, [user, editing]);
+
   const saved = profileFormFrom(user);
   const profileChanged = (Object.keys(saved) as Array<keyof typeof saved>).some((k) => profile[k].trim() !== saved[k]);
-  const normalizedPhone = normalizePhMobile(profile.phone);
   const profileErrors = {
     firstName: !profile.firstName.trim() ? "This field is required" : null,
     lastName: !profile.lastName.trim() ? "This field is required" : null,
@@ -83,43 +113,53 @@ export function ProfileScreen() {
       : !EMAIL_PATTERN.test(profile.email.trim())
         ? "Enter a valid email address"
         : null,
-    phone: !profile.phone.trim()
-      ? "This field is required"
-      : !normalizedPhone
-        ? "Enter a PH mobile number, e.g. 0917 123 4567"
-        : null,
+    phone: !profile.phone ? "This field is required" : !isValidPhLocal(profile.phone) ? INVALID_PHONE : null,
   };
+  // A first digit other than 9 is wrong straight away; a missing or short number shows after tapping Save.
+  const phoneError = profileTried
+    ? profileErrors.phone
+    : profile.phone.length > 0 && profile.phone[0] !== "9"
+      ? INVALID_PHONE
+      : null;
 
   const editProfile = (patch: Partial<typeof profile>) => {
     setProfile((current) => ({ ...current, ...patch }));
     setProfileMessage(null);
   };
 
-  const saveProfile = async () => {
-    setProfileTried(true);
-    if (Object.values(profileErrors).some(Boolean) || !normalizedPhone) return;
-    setProfileSaving(true);
-    try {
-      await updateProfile({
-        firstName: profile.firstName.trim(),
-        lastName: profile.lastName.trim(),
-        email: profile.email.trim(),
-        phone: normalizedPhone,
-      });
-      setProfile({ ...profile, phone: formatPhMobile(normalizedPhone) });
-      setProfileTried(false);
-      setProfileMessage({ type: "success", text: "Personal details saved." });
-    } catch (error) {
-      setProfileMessage({ type: "error", text: error instanceof Error ? error.message : "Unable to save personal details." });
-    } finally {
-      setProfileSaving(false);
-    }
+  const startEditing = () => {
+    setProfile(profileFormFrom(user));
+    setProfileTried(false);
+    setProfileMessage(null);
+    setEditing(true);
   };
 
   const cancelProfile = () => {
     setProfile(profileFormFrom(user));
     setProfileTried(false);
     setProfileMessage(null);
+    setEditing(false);
+  };
+
+  const saveProfile = async () => {
+    setProfileTried(true);
+    if (Object.values(profileErrors).some(Boolean)) return;
+    setProfileSaving(true);
+    try {
+      await updateProfile({
+        firstName: profile.firstName.trim(),
+        lastName: profile.lastName.trim(),
+        email: profile.email.trim(),
+        phone: `+63${profile.phone}`,
+      });
+      setProfileTried(false);
+      setEditing(false);
+      setProfileMessage({ type: "success", text: "Personal details saved." });
+    } catch (error) {
+      setProfileMessage({ type: "error", text: error instanceof Error ? error.message : "Unable to save personal details." });
+    } finally {
+      setProfileSaving(false);
+    }
   };
 
   // ----- Password -----
@@ -129,6 +169,10 @@ export function ProfileScreen() {
   const [passwordSaving, setPasswordSaving] = useState(false);
 
   const passwordTyped = Object.values(passwords).some((v) => v.length > 0);
+  // Update stays off until all three are filled in and the new password is typed the same twice.
+  const passwordReady = Boolean(
+    passwords.current && passwords.next && passwords.confirm && passwords.next === passwords.confirm,
+  );
   const passwordErrors = {
     current: !passwords.current ? "This field is required" : null,
     next: !passwords.next
@@ -176,6 +220,21 @@ export function ProfileScreen() {
     setPasswordMessage(null);
   };
 
+  // ----- Pull to refresh -----
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await refreshProfile();
+    } catch (error) {
+      console.warn("[Profile] Refresh failed", error);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const locked = !editing;
+  const detailsHighlighted = highlight === "name" || highlight === "email" || highlight === "contact";
+
   return (
     <View style={styles.flex}>
       <ScrollView
@@ -183,8 +242,18 @@ export function ProfileScreen() {
         style={styles.scroll}
         contentContainerStyle={[styles.content, keyboard.contentPaddingBottom > 0 && { paddingBottom: keyboard.contentPaddingBottom }]}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} colors={[COLORS.navy, COLORS.gold]} tintColor={COLORS.navy} />
+        }
       >
         <View ref={keyboard.contentRef} collapsable={false}>
+          {onBackToNotifications ? (
+            <TouchableOpacity style={styles.backLink} onPress={onBackToNotifications} hitSlop={10} accessibilityRole="button">
+              <ChevronIcon size={16} direction="left" color={COLORS.navy} strokeWidth={2.4} />
+              <Text style={styles.backLinkText}>Back to notifications</Text>
+            </TouchableOpacity>
+          ) : null}
+
           <MobilePageHeader title="Profile" subtitle="Manage your personal details and account settings." />
 
           {/* Identity card */}
@@ -196,23 +265,33 @@ export function ProfileScreen() {
             <View style={styles.rolePill}>
               <Text style={styles.rolePillText}>{ROLE_LABELS[user.role].toUpperCase()}</Text>
             </View>
-            <View style={styles.identityLines}>
-              {user.employeeId ? <Text style={styles.identityLine}>{user.employeeId}</Text> : null}
-              <Text style={styles.identityLine}>{user.email}</Text>
-              {user.phone ? <Text style={styles.identityLine}>{formatPhMobile(user.phone)}</Text> : null}
-              {user.joinedDate ? <Text style={styles.identityLine}>Joined {formatJoined(user.joinedDate)}</Text> : null}
+            <View style={styles.infoList}>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Email</Text>
+                <Text style={styles.infoValue}>{user.email}</Text>
+              </View>
+              <View style={[styles.infoRow, styles.infoRowLast]}>
+                <Text style={styles.infoLabel}>Mobile number</Text>
+                <Text style={[styles.infoValue, !user.phone && styles.infoValueEmpty]}>
+                  {user.phone ? formatPhMobile(user.phone) : "No mobile number on record"}
+                </Text>
+              </View>
             </View>
-            <TouchableOpacity style={styles.signOutButton} onPress={() => setConfirm("signOut")} accessibilityRole="button">
-              <Text style={styles.signOutText}>Sign out</Text>
-            </TouchableOpacity>
           </View>
 
           {/* Personal details */}
-          <View style={styles.card}>
+          <View
+            style={[styles.card, detailsHighlighted && styles.cardHighlighted]}
+            onLayout={(e) => {
+              if (focusField && focusField !== "password") scrollToCard(e.nativeEvent.layout.y);
+            }}
+          >
             <Text style={styles.cardTitle}>Personal Details</Text>
             <FormField
               label="First name"
               required
+              readOnly={locked}
+              highlighted={highlight === "name"}
               value={profile.firstName}
               onChangeText={(firstName) => editProfile({ firstName })}
               autoCapitalize="words"
@@ -222,6 +301,8 @@ export function ProfileScreen() {
             <FormField
               label="Last name"
               required
+              readOnly={locked}
+              highlighted={highlight === "name"}
               value={profile.lastName}
               onChangeText={(lastName) => editProfile({ lastName })}
               autoCapitalize="words"
@@ -233,45 +314,59 @@ export function ProfileScreen() {
               label="Email address"
               required
               readOnly
+              highlighted={highlight === "email"}
               value={profile.email}
               autoCapitalize="none"
               keyboardType="email-address"
               error={profileTried ? profileErrors.email : null}
               {...fieldFocus}
             />
-            <FormField
+            <PhoneField
               label="Mobile number"
               required
-              value={profile.phone}
-              onChangeText={(phone) => editProfile({ phone })}
-              keyboardType="phone-pad"
-              placeholder="0917 123 4567"
-              error={profileTried ? profileErrors.phone : null}
+              readOnly={locked}
+              highlighted={highlight === "contact"}
+              digits={profile.phone}
+              onChangeDigits={(phone) => editProfile({ phone })}
+              error={editing ? phoneError : null}
               {...fieldFocus}
             />
             <FormField label="Role" value={ROLE_LABELS[user.role]} readOnly />
 
             <StatusMessage message={profileMessage} />
-            <View style={styles.buttonRow}>
-              <TouchableOpacity
-                style={[styles.secondaryButton, (!profileChanged || profileSaving) && styles.buttonDisabled]}
-                onPress={cancelProfile}
-                disabled={!profileChanged || profileSaving}
-              >
-                <Text style={styles.secondaryButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.primaryButton, (!profileChanged || profileSaving) && styles.buttonDisabled]}
-                onPress={() => void saveProfile()}
-                disabled={!profileChanged || profileSaving}
-              >
-                <Text style={styles.primaryButtonText}>{profileSaving ? "Saving..." : "Save Changes"}</Text>
-              </TouchableOpacity>
-            </View>
+            {editing ? (
+              <View style={styles.buttonRow}>
+                <TouchableOpacity
+                  style={[styles.secondaryButton, profileSaving && styles.buttonDisabled]}
+                  onPress={cancelProfile}
+                  disabled={profileSaving}
+                >
+                  <Text style={styles.secondaryButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.primaryButton, (!profileChanged || profileSaving) && styles.buttonDisabled]}
+                  onPress={() => void saveProfile()}
+                  disabled={!profileChanged || profileSaving}
+                >
+                  <Text style={styles.primaryButtonText}>{profileSaving ? "Saving..." : "Save Changes"}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.buttonRow}>
+                <TouchableOpacity style={styles.primaryButton} onPress={startEditing} accessibilityRole="button">
+                  <Text style={styles.primaryButtonText}>Edit</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
 
           {/* Password */}
-          <View style={styles.card}>
+          <View
+            style={[styles.card, highlight === "password" && styles.cardHighlighted]}
+            onLayout={(e) => {
+              if (focusField === "password") scrollToCard(e.nativeEvent.layout.y);
+            }}
+          >
             <Text style={styles.cardTitle}>Password</Text>
             <FormField
               label="Current password"
@@ -327,9 +422,9 @@ export function ProfileScreen() {
                 <Text style={styles.secondaryButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.primaryButton, (!passwordTyped || passwordSaving) && styles.buttonDisabled]}
+                style={[styles.primaryButton, (!passwordReady || passwordSaving) && styles.buttonDisabled]}
                 onPress={() => void savePassword()}
-                disabled={!passwordTyped || passwordSaving}
+                disabled={!passwordReady || passwordSaving}
               >
                 <Text style={styles.primaryButtonText}>{passwordSaving ? "Updating..." : "Update Password"}</Text>
               </TouchableOpacity>
@@ -356,14 +451,19 @@ export function ProfileScreen() {
               <Text style={styles.deleteText}>{deletionRequested ? "Deletion requested" : "Request account deletion"}</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Log out: same colors as Request account deletion */}
+          <TouchableOpacity style={styles.logOutButton} onPress={() => setConfirm("logOut")} accessibilityRole="button" activeOpacity={0.85}>
+            <Text style={styles.deleteText}>Log out</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
 
       <ConfirmDialog
-        visible={confirm === "signOut"}
-        title="Sign out?"
-        message="You will be signed out on this phone. Your saved data stays on the phone until someone else signs in."
-        confirmLabel="Sign out"
+        visible={confirm === "logOut"}
+        title="Log out?"
+        message="You will be logged out on this phone. Your saved data stays on the phone until someone else signs in."
+        confirmLabel="Log out"
         variant="danger"
         onCancel={() => setConfirm(null)}
         onConfirm={() => {
@@ -393,6 +493,9 @@ const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: "#ffffff" },
   content: { paddingHorizontal: 18, paddingTop: 20, paddingBottom: 36 },
 
+  backLink: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", marginBottom: 14 },
+  backLinkText: { color: COLORS.navy, fontSize: 15, fontWeight: "700" },
+
   card: {
     marginTop: 18,
     borderWidth: 1,
@@ -401,6 +504,7 @@ const styles = StyleSheet.create({
     padding: 16,
     backgroundColor: "#ffffff",
   },
+  cardHighlighted: { borderColor: COLORS.gold, borderWidth: 2 },
   cardTitle: { fontSize: 19, fontWeight: "800", color: COLORS.navy, marginBottom: 14 },
   cardTitleNoMargin: { fontSize: 19, fontWeight: "800", color: COLORS.navy },
 
@@ -424,19 +528,20 @@ const styles = StyleSheet.create({
     borderColor: COLORS.navy,
   },
   rolePillText: { fontSize: 13, fontWeight: "800", color: COLORS.navy, letterSpacing: 0.8 },
-  identityLines: { alignItems: "center", gap: 4, marginTop: 16 },
-  identityLine: { fontSize: 16, color: COLORS.text },
-  signOutButton: {
-    marginTop: 18,
-    minHeight: 46,
-    paddingHorizontal: 22,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: "#f3a5a5",
+  infoList: { alignSelf: "stretch", marginTop: 18, borderTopWidth: 1, borderTopColor: COLORS.border },
+  infoRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
   },
-  signOutText: { color: COLORS.danger, fontSize: 15, fontWeight: "700" },
+  infoRowLast: { borderBottomWidth: 0, paddingBottom: 0 },
+  infoLabel: { fontSize: 15, color: COLORS.muted, fontWeight: "600" },
+  infoValue: { flexShrink: 1, fontSize: 15, color: COLORS.text, fontWeight: "600", textAlign: "right" },
+  infoValueEmpty: { color: COLORS.muted, fontWeight: "400", fontStyle: "italic" },
 
   rules: { gap: 8, marginTop: -4, marginBottom: 16, paddingHorizontal: 2 },
   ruleRow: { flexDirection: "row", alignItems: "center", gap: 10 },
@@ -483,6 +588,16 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   deleteText: { color: COLORS.danger, fontSize: 15, fontWeight: "700" },
+  logOutButton: {
+    marginTop: 18,
+    minHeight: 50,
+    borderRadius: 10,
+    backgroundColor: "#fde2e2",
+    borderWidth: 1,
+    borderColor: "#f3a5a5",
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
   successText: { color: COLORS.success, fontSize: 15, fontWeight: "700", marginBottom: 12, marginTop: 4 },
   errorText: { color: COLORS.danger, fontSize: 15, fontWeight: "700", marginBottom: 12, marginTop: 4 },

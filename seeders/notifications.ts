@@ -104,6 +104,7 @@ export function getSeederNotifications(user: TeamMember, jobOrders: JobOrder[], 
       message: [{ text: "Your password was changed successfully." }],
       createdAt: ago(60 * 24 * 11 + 120),
       read: true,
+      profileField: "password",
     },
   ];
 

@@ -1,4 +1,4 @@
-import type { TeamMember, LeaveType, Weekday, WeeklyAvailability } from "../types/bms";
+import type { LeaveType, Weekday, WeeklyAvailability } from "../types/bms";
 
 // TODO: load and save these through the BMS backend once the availability/leave endpoints exist.
 
@@ -20,17 +20,13 @@ export const LEAVE_TYPES: Array<{ key: LeaveType; label: string }> = [
   { key: "OTHER", label: "Other" },
 ];
 
-const SEEDER_WEEKLY_AVAILABILITY: WeeklyAvailability = {
-  MONDAY: true,
-  TUESDAY: true,
-  WEDNESDAY: true,
-  THURSDAY: true,
-  FRIDAY: true,
+/** No days picked. Every team member starts here and chooses their own days (nothing is set for them). */
+export const NO_DAYS_SELECTED: WeeklyAvailability = {
+  MONDAY: false,
+  TUESDAY: false,
+  WEDNESDAY: false,
+  THURSDAY: false,
+  FRIDAY: false,
   SATURDAY: false,
   SUNDAY: false,
 };
-
-/** Starting weekly availability for a user: drivers Mon–Fri, helpers Mon–Sat. */
-export function getSeederAvailability(user: Pick<TeamMember, "role">): WeeklyAvailability {
-  return user.role === "helper" ? { ...SEEDER_WEEKLY_AVAILABILITY, SATURDAY: true } : { ...SEEDER_WEEKLY_AVAILABILITY };
-}

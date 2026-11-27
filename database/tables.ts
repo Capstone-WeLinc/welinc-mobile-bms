@@ -1,5 +1,5 @@
 export const DATABASE_NAME = "bms_mobile.db";
-export const DATABASE_VERSION = 3;
+export const DATABASE_VERSION = 4;
 
 // Row shapes as stored in SQLite. Booleans are 0/1 and arrays/objects are JSON text.
 // Repositories convert these to and from the app types in types/bms.ts.
@@ -84,6 +84,7 @@ export interface NotificationRow {
   jobOrderId: string | null;
   driversOnly: number;
   readSyncPending: number;
+  profileField: string | null;
 }
 
 /**
@@ -180,6 +181,7 @@ export const CREATE_TABLES_SQL = `
     jobOrderId TEXT,
     driversOnly INTEGER NOT NULL DEFAULT 0 CHECK (driversOnly IN (0, 1)),
     readSyncPending INTEGER NOT NULL DEFAULT 0 CHECK (readSyncPending IN (0, 1)),
+    profileField TEXT,
     PRIMARY KEY (userId, id)
   );
 

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { authService, USE_SEEDER_AUTH } from "../services/AuthService";
-import { syncService } from "../services/SyncService";
+import { SessionExpiredError, syncService } from "../services/SyncService";
 import type { TeamMember } from "../types/bms";
 
 type ProfileUpdate = Pick<TeamMember, "firstName" | "lastName" | "email" | "phone">;
@@ -15,6 +15,8 @@ type UserState = {
   /** The server rejected the session: go back to sign-in, keeping local data for the same user. */
   expireSession: () => Promise<void>;
   updateProfile: (update: ProfileUpdate) => Promise<void>;
+  /** Reload the profile from the server (pull to refresh); the saved one stays when offline. */
+  refreshProfile: () => Promise<void>;
   /** Throws an Error with a user-facing message if the current password is wrong. */
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   requestAccountDeletion: () => Promise<void>;
@@ -48,6 +50,19 @@ export const useUserStore = create<UserState>((set, get) => ({
     const lastName = update.lastName.trim();
     const next = { ...current, ...update, firstName, lastName, name: `${firstName} ${lastName}` };
     set({ user: await authService.updateOwnProfile(next) });
+  },
+
+  refreshProfile: async () => {
+    const current = get().user;
+    if (!current) return;
+    try {
+      const fresh = await authService.refreshProfile(current);
+      // Ignore the answer if someone signed out meanwhile.
+      if (get().user?.id === fresh.id) set({ user: fresh });
+    } catch (error) {
+      if (error instanceof SessionExpiredError) await get().expireSession();
+      else throw error;
+    }
   },
 
   changePassword: async (currentPassword, newPassword) => {

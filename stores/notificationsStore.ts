@@ -3,6 +3,8 @@ import { create } from "zustand";
 import { getDatabase } from "../database/database";
 import { getSeederNotifications } from "../seeders/notifications";
 import { NotificationRepository } from "../repositories/NotificationRepository";
+import { fetchAccountNotifications } from "../services/AccountNotificationsService";
+import { USE_SEEDER_AUTH } from "../services/AuthService";
 import type { AppNotification, TeamRole, TeamMember } from "../types/bms";
 import { useJobOrdersStore } from "./jobOrdersStore";
 
@@ -24,11 +26,25 @@ function seederNotificationsFor(user: TeamMember): AppNotification[] {
   return getSeederNotifications(user, useJobOrdersStore.getState().jobOrders);
 }
 
-/** Pull this user's notifications into SQLite. Read flags already set on this phone are kept. */
+/**
+ * Pull this user's notifications into SQLite. Read flags already set on this phone are kept.
+ * Seeder sign-in uses the seeder list; a real sign-in uses the account's own activity from
+ * shared auth, so dates match the portal. If the server can't be reached, the saved list stays.
+ */
 async function syncForUser(user: TeamMember): Promise<void> {
+  let incoming: AppNotification[];
+  if (USE_SEEDER_AUTH) {
+    incoming = seederNotificationsFor(user);
+  } else {
+    try {
+      // TODO: add job order notifications once the BMS backend has team member routes.
+      incoming = await fetchAccountNotifications(user);
+    } catch (error) {
+      console.warn("[Notifications] Could not load account notifications; showing the saved list", error);
+      return;
+    }
+  }
   const db = await getDatabase();
-  // TODO: fetch this user's notifications from the BMS backend instead of the seeder data.
-  const incoming = seederNotificationsFor(user);
   await db.withExclusiveTransactionAsync(async (txn) => {
     await new NotificationRepository(txn).reconcileForUser(user.id, incoming);
   });
