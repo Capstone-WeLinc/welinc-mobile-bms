@@ -54,7 +54,22 @@ const MIGRATIONS: Record<number, (db: SQLite.SQLiteDatabase) => Promise<void>> =
   2: migrateToVersion2,
   3: rebuildPostServiceRecordsIfOutdated,
   4: addNotificationProfileField,
+  5: migrateToVersion5,
 };
+
+/**
+ * Spec bms/0022: post_service_records gets syncBlocked, lastError and baseVersion (rebuilt from
+ * POST_SERVICE_RECORDS_COLUMNS_SQL, keeping its rows), and job_orders gets postServiceLocked.
+ */
+async function migrateToVersion5(db: SQLite.SQLiteDatabase): Promise<void> {
+  await rebuildPostServiceRecordsIfOutdated(db);
+  const jobOrderColumns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(job_orders)");
+  if (!jobOrderColumns.some((column) => column.name === "postServiceLocked")) {
+    await db.execAsync(
+      "ALTER TABLE job_orders ADD COLUMN postServiceLocked INTEGER NOT NULL DEFAULT 0 CHECK (postServiceLocked IN (0, 1))",
+    );
+  }
+}
 
 /** Adds notifications.profileField (which profile field an account notification opens). */
 async function addNotificationProfileField(db: SQLite.SQLiteDatabase): Promise<void> {

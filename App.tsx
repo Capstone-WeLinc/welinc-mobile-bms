@@ -1,3 +1,4 @@
+import NetInfo from "@react-native-community/netinfo";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import type { ReactElement } from "react";
@@ -22,7 +23,7 @@ import { ForgotPasswordScreen } from "./screens/ForgotPasswordScreen";
 import { LoginScreen } from "./screens/LoginScreen";
 import { SplashScreen } from "./screens/SplashScreen";
 import { initializeDatabase } from "./database/database";
-import { authService } from "./services/AuthService";
+import { authService, USE_SEEDER_AUTH } from "./services/AuthService";
 import { syncService } from "./services/SyncService";
 import { useAvailabilityStore } from "./stores/availabilityStore";
 import { useJobOrdersStore } from "./stores/jobOrdersStore";
@@ -31,6 +32,9 @@ import { useNotificationsStore, useUnreadCount } from "./stores/notificationsSto
 import type { ProfileField } from "./types/bms";
 
 type TabKey = "home" | "availability" | "job-orders" | "forms" | "notifications" | "profile";
+
+/** How often the app syncs while it is open and in the foreground (spec bms/0022). */
+const AUTO_REFRESH_MS = 45_000;
 
 const ACTIVE_ICON = "#d4a93f";
 const INACTIVE_ICON = "#b8c0e0";
@@ -90,6 +94,34 @@ export default function App() {
       if (state === "active") void refreshJobOrders();
     });
     return () => subscription.remove();
+  }, [user, restoring, databaseError, refreshJobOrders]);
+
+  // Spec bms/0022: send waiting forms as soon as the phone is online again (mobile data or Wi-Fi),
+  // and refresh every 45 seconds while the app is open, so new job orders show up almost live.
+  // Seeder accounts have no server, so neither runs for them.
+  useEffect(() => {
+    if (!user || restoring || databaseError || USE_SEEDER_AUTH) return;
+    let wasOnline: boolean | null = null;
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const online = state.isConnected === true && state.isInternetReachable !== false;
+      if (online && wasOnline === false) void refreshJobOrders();
+      wasOnline = online;
+    });
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const startTimer = () => {
+      if (!timer) timer = setInterval(() => void refreshJobOrders(), AUTO_REFRESH_MS);
+    };
+    const stopTimer = () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+    };
+    if (AppState.currentState === "active") startTimer();
+    const appState = AppState.addEventListener("change", (state) => (state === "active" ? startTimer() : stopTimer()));
+    return () => {
+      unsubscribe();
+      appState.remove();
+      stopTimer();
+    };
   }, [user, restoring, databaseError, refreshJobOrders]);
 
   // Open the local SQLite database, and sign back in automatically if a session was saved on this phone.

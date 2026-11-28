@@ -13,22 +13,25 @@ export class PostServiceRepository {
     return Object.fromEntries(rows.map((row) => [row.jobOrderId, toRecord(row)]));
   }
 
-  /** Records not yet received by the backend. */
+  /** Records waiting for the backend: not yet accepted and not stopped (spec bms/0022). */
   async getPendingRecords(): Promise<PostServiceRecord[]> {
     const rows = await this.db.getAllAsync<PostServiceRecordRow>(
-      "SELECT * FROM post_service_records WHERE syncPending = 1 ORDER BY submittedAt ASC",
+      "SELECT * FROM post_service_records WHERE syncPending = 1 AND syncBlocked = 0 ORDER BY submittedAt ASC",
     );
     return rows.map(toRecord);
   }
 
-  /** Save (or replace) a record and queue it for upload. */
+  /**
+   * The driver tapped Submit: save (or replace) the record and queue it for upload. Clears any
+   * earlier error or block, and keeps the server version the record was based on.
+   */
   async saveRecord(record: PostServiceRecord): Promise<void> {
     try {
       await this.db.runAsync(
         `INSERT INTO post_service_records
           (jobOrderId, serviceCompleted, arrivalTime, addOnKeys, paymentMethod, addOnPayment,
-           completionNotes, issueReported, issueDetails, submittedAt, syncPending)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+           completionNotes, issueReported, issueDetails, submittedAt, syncPending, syncBlocked, lastError, baseVersion)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, NULL, ?)
          ON CONFLICT(jobOrderId) DO UPDATE SET
            serviceCompleted = excluded.serviceCompleted,
            arrivalTime = excluded.arrivalTime,
@@ -39,17 +42,12 @@ export class PostServiceRepository {
            issueReported = excluded.issueReported,
            issueDetails = excluded.issueDetails,
            submittedAt = excluded.submittedAt,
-           syncPending = 1`,
-        record.jobOrderId,
-        record.serviceCompleted ? 1 : 0,
-        record.arrivalTime,
-        JSON.stringify(record.addOnKeys),
-        record.paymentMethod,
-        record.addOnPayment,
-        record.completionNotes,
-        record.issueReported ? 1 : 0,
-        record.issueDetails,
-        record.submittedAt,
+           syncPending = 1,
+           syncBlocked = 0,
+           lastError = NULL,
+           baseVersion = COALESCE(post_service_records.baseVersion, excluded.baseVersion)`,
+        ...recordValues(record),
+        record.baseVersion ?? null,
       );
     } catch (error) {
       console.error(`[SQLite] Failed to save post-service record ${record.jobOrderId}`, error);
@@ -57,9 +55,74 @@ export class PostServiceRepository {
     }
   }
 
-  async markSynced(jobOrderId: string): Promise<void> {
-    await this.db.runAsync("UPDATE post_service_records SET syncPending = 0 WHERE jobOrderId = ?", jobOrderId);
+  /**
+   * The server accepted the upload. `submittedAt` identifies the copy that was sent, so a newer
+   * Submit made while the upload was running stays queued.
+   */
+  async markSynced(jobOrderId: string, submittedAt: string, version: string | null): Promise<void> {
+    await this.db.runAsync(
+      `UPDATE post_service_records SET syncPending = 0, syncBlocked = 0, lastError = NULL, baseVersion = COALESCE(?, baseVersion)
+       WHERE jobOrderId = ? AND submittedAt = ?`,
+      version,
+      jobOrderId,
+      submittedAt,
+    );
   }
+
+  /** Not accepted yet but worth retrying (e.g. not distributed, server down): keep it queued with the reason. */
+  async markRetrying(jobOrderId: string, submittedAt: string, message: string): Promise<void> {
+    await this.db.runAsync(
+      "UPDATE post_service_records SET lastError = ? WHERE jobOrderId = ? AND submittedAt = ? AND syncPending = 1",
+      message,
+      jobOrderId,
+      submittedAt,
+    );
+  }
+
+  /** Retrying won't help (invalid details, finalized, not the driver): stop until the driver submits again. */
+  async markBlocked(jobOrderId: string, submittedAt: string, message: string): Promise<void> {
+    await this.db.runAsync(
+      "UPDATE post_service_records SET syncBlocked = 1, lastError = ? WHERE jobOrderId = ? AND submittedAt = ? AND syncPending = 1",
+      message,
+      jobOrderId,
+      submittedAt,
+    );
+  }
+
+  /**
+   * The office changed the record after this copy (409 POST_SERVICE_CHANGED): replace it with the
+   * office's version, no longer queued, and keep the message for the form.
+   */
+  async replaceWithOffice(record: PostServiceRecord, sentSubmittedAt: string, version: string | null, message: string): Promise<void> {
+    await this.db.runAsync(
+      `UPDATE post_service_records SET
+         serviceCompleted = ?, arrivalTime = ?, addOnKeys = ?, paymentMethod = ?, addOnPayment = ?,
+         completionNotes = ?, issueReported = ?, issueDetails = ?, submittedAt = ?,
+         syncPending = 0, syncBlocked = 0, lastError = ?, baseVersion = ?
+       WHERE jobOrderId = ? AND submittedAt = ?`,
+      ...recordValues(record).slice(1),
+      message,
+      version,
+      record.jobOrderId,
+      sentSubmittedAt,
+    );
+  }
+}
+
+/** Column values in table order, from jobOrderId to submittedAt. */
+function recordValues(record: PostServiceRecord): Array<string | number | null> {
+  return [
+    record.jobOrderId,
+    record.serviceCompleted ? 1 : 0,
+    record.arrivalTime,
+    JSON.stringify(record.addOnKeys),
+    record.paymentMethod,
+    record.addOnPayment,
+    record.completionNotes,
+    record.issueReported ? 1 : 0,
+    record.issueDetails,
+    record.submittedAt,
+  ];
 }
 
 function toRecord(row: PostServiceRecordRow): PostServiceRecord {
@@ -74,5 +137,9 @@ function toRecord(row: PostServiceRecordRow): PostServiceRecord {
     issueReported: row.issueReported === 1,
     issueDetails: row.issueDetails,
     submittedAt: row.submittedAt,
+    syncPending: row.syncPending === 1,
+    syncBlocked: row.syncBlocked === 1,
+    lastError: row.lastError ?? null,
+    baseVersion: row.baseVersion ?? null,
   };
 }

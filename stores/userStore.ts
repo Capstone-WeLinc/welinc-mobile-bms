@@ -32,7 +32,9 @@ export const useUserStore = create<UserState>((set, get) => ({
   signOut: async () => {
     if (!USE_SEEDER_AUTH) {
       // Best effort: send queued post-service records while the session is still valid.
-      await syncService.sync().catch((error) => console.warn("[Auth] Sync before sign-out failed", error));
+      await syncService
+        .sync({ isDriver: get().user?.role === "driver" })
+        .catch((error) => console.warn("[Auth] Sync before sign-out failed", error));
     }
     await authService.logout();
     set({ user: null, deletionRequested: false });

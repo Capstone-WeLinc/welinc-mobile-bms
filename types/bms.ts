@@ -31,11 +31,14 @@ export type ChargeLine = {
 
 /** A booking/job order assigned to the driver or helper. Used by Home and Job Orders. */
 export type JobOrder = {
+  /** The booking UUID; the same key in dispatch and completion (spec bms/0022) */
   id: string;
   jobOrderNumber: string;
   bookingNumber: string;
   status: BookingStatus;
   postServiceFormSubmitted: boolean;
+  /** The office finalized the post-service record on the web; the form is read-only */
+  postServiceLocked: boolean;
 
   // Client
   clientName: string;
@@ -50,10 +53,13 @@ export type JobOrder = {
   dispatchTime: string;
 
   // Vehicle and team
-  /** Assigned driver's user id */
+  /**
+   * Assigned driver's team member record id (dispatch `drivers.id`), not the login id.
+   * Seeder job orders use the login id. Empty for a subcontractor trip.
+   */
   driverId: string;
   driverName: string;
-  /** Assigned helpers' user ids (same order as helperNames) */
+  /** Assigned helpers' team member record ids (dispatch `helpers.id`), same order as helperNames */
   helperIds: string[];
   helperNames: string[];
   garage: string;
@@ -131,6 +137,16 @@ export type PostServiceRecord = {
   issueDetails: string;
   /** ISO timestamp */
   submittedAt: string;
+
+  // Sync state on this phone (spec bms/0022). Not part of what the driver fills in.
+  /** Saved on the phone, not yet accepted by the server */
+  syncPending?: boolean;
+  /** Stopped retrying (invalid details, or finalized by office) until the driver submits again */
+  syncBlocked?: boolean;
+  /** Why the last upload wasn't accepted, or that the office updated the record */
+  lastError?: string | null;
+  /** The server version this copy is based on, sent with the next submission */
+  baseVersion?: string | null;
 };
 
 export type NotificationType = "ASSIGNMENT" | "SCHEDULE_CHANGE" | "REMINDER" | "COMPLETED" | "ACCOUNT";

@@ -95,6 +95,8 @@ export function getSeederJobOrders(today = new Date()): JobOrder[] {
       status: row.status,
       // Submitting the post-service record is what marks a job as done.
       postServiceFormSubmitted: row.status === "COMPLETED",
+      // Seeder records are never finalized by an office.
+      postServiceLocked: false,
       clientName: row.client,
       contactNumber: `0934 562 ${String(1980 + index).padStart(4, "0")}`,
       date: toDateKey(date),

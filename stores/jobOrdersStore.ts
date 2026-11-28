@@ -54,7 +54,8 @@ export const useJobOrdersStore = create<JobOrdersState>((set, get) => ({
     } else {
       // Offline or failed syncs keep the last cached snapshot.
       try {
-        set({ lastSync: await syncService.sync(), syncError: null });
+        const isDriver = useUserStore.getState().user?.role === "driver";
+        set({ lastSync: await syncService.sync({ isDriver }), syncError: null });
       } catch (error) {
         if (error instanceof SessionExpiredError) {
           await useUserStore.getState().expireSession();
@@ -82,9 +83,16 @@ export const useJobOrdersStore = create<JobOrdersState>((set, get) => ({
   },
 }));
 
-/** Job orders the signed-in user is assigned to (as driver or helper). Use this in screens. */
+/**
+ * Job orders the signed-in user is assigned to (as driver or helper). Use this in screens.
+ * A real sign-in downloads only the user's own job orders (and the cache is cleared when another
+ * user signs in), so they are shown as they are; seeder job orders are filtered by account.
+ */
 export function useMyJobOrders(): JobOrder[] {
   const all = useJobOrdersStore((s) => s.jobOrders);
   const user = useUserStore((s) => s.user);
-  return useMemo(() => (user ? all.filter((jo) => isAssignedTo(jo, user)) : []), [all, user]);
+  return useMemo(() => {
+    if (!user) return [];
+    return USE_SEEDER_AUTH ? all.filter((jo) => isAssignedTo(jo, user)) : all;
+  }, [all, user]);
 }

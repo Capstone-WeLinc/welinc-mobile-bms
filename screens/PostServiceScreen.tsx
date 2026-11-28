@@ -6,22 +6,46 @@ import { JobOrderCard } from "../components/JobOrderCard";
 import { JobOrderFilters } from "../components/JobOrderFilters";
 import { MobilePageHeader } from "../components/MobilePageHeader";
 import { COLORS } from "../constants/colors";
+import { USE_SEEDER_AUTH } from "../services/AuthService";
 import { useJobOrdersStore, useMyJobOrders } from "../stores/jobOrdersStore";
-import type { JobOrder } from "../types/bms";
+import type { JobOrder, PostServiceRecord } from "../types/bms";
 import { emptyFilterMessage, filterJobOrders, type DateFilter, type StatusFilter } from "../utils/jobOrderFilters";
 import { PostServiceFormScreen } from "./PostServiceFormScreen";
 
-/** Only ongoing job orders can be edited. Submitting the record marks the job as done. */
-function CardFooter({ jobOrder, onEdit }: { jobOrder: JobOrder; onEdit: () => void }) {
-  if (jobOrder.status === "COMPLETED") {
+/**
+ * A job order can be opened once it is ongoing. Submitting the record marks the job as done; the
+ * driver can still correct it until the office finalizes it, then only view it (spec bms/0022).
+ */
+export function canOpenPostService(jobOrder: JobOrder): boolean {
+  return jobOrder.postServiceLocked || jobOrder.status === "ONGOING" || jobOrder.status === "COMPLETED";
+}
+
+/** Short line about an unsent record, under "Record submitted". */
+function sendState(record: PostServiceRecord | undefined): string | null {
+  if (!record) return null;
+  if (record.syncBlocked) return "Not sent. Open the record to see why.";
+  if (record.syncPending) return "Waiting to be sent";
+  return null;
+}
+
+function CardFooter({ jobOrder, record, onEdit }: { jobOrder: JobOrder; record?: PostServiceRecord; onEdit: () => void }) {
+  if (jobOrder.postServiceLocked || jobOrder.status === "COMPLETED") {
+    const locked = jobOrder.postServiceLocked;
+    const state = locked ? null : sendState(record);
     return (
       <View style={styles.footer}>
-        <View style={styles.submitted}>
-          <View style={styles.submittedIcon}>
-            <CheckIcon size={12} />
+        <View style={styles.submittedCol}>
+          <View style={styles.submitted}>
+            <View style={styles.submittedIcon}>
+              <CheckIcon size={12} />
+            </View>
+            <Text style={styles.submittedText}>{locked ? "Finalized by office" : "Record submitted · Job done"}</Text>
           </View>
-          <Text style={styles.submittedText}>Record submitted · Job done</Text>
+          {state ? <Text style={[styles.sendState, record?.syncBlocked && styles.sendStateError]}>{state}</Text> : null}
         </View>
+        <TouchableOpacity style={styles.secondaryButton} onPress={onEdit} accessibilityRole="button">
+          <Text style={styles.secondaryButtonText}>{locked ? "View Record" : "Edit Record"}</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -61,7 +85,7 @@ export function PostServiceScreen({ initialJobOrderId, fromNotification = false,
   const [status, setStatus] = useState<StatusFilter>("ALL");
   const [date, setDate] = useState<DateFilter>({ kind: "ALL" });
   const [editingId, setEditingId] = useState<string | null>(() =>
-    initialJobOrderId && jobOrders.find((jo) => jo.id === initialJobOrderId)?.status === "ONGOING" ? initialJobOrderId : null,
+    initialJobOrderId && jobOrders.some((jo) => jo.id === initialJobOrderId && canOpenPostService(jo)) ? initialJobOrderId : null,
   );
   const [notificationEntryId, setNotificationEntryId] = useState<string | null>(() =>
     fromNotification ? (initialJobOrderId ?? null) : null,
@@ -102,7 +126,10 @@ export function PostServiceScreen({ initialJobOrderId, fromNotification = false,
           await saveRecord(record);
           setNotificationEntryId(null);
           setEditingId(null);
-          setSavedMessage(`Post-service record submitted. ${editing.jobOrderNumber} is now Done.`);
+          setSavedMessage(
+            `Post-service record saved. ${editing.jobOrderNumber} is now Done.` +
+              (USE_SEEDER_AUTH ? "" : " It is sent to the office as soon as you're online."),
+          );
         }}
       />
     );
@@ -135,9 +162,9 @@ export function PostServiceScreen({ initialJobOrderId, fromNotification = false,
           <JobOrderCard
             key={jo.id}
             jobOrder={jo}
-            actionLabel={jo.status === "ONGOING" ? "Edit post-service record." : ""}
-            onPress={jo.status === "ONGOING" ? () => openForm(jo.id) : undefined}
-            footer={<CardFooter jobOrder={jo} onEdit={() => openForm(jo.id)} />}
+            actionLabel={!canOpenPostService(jo) ? "" : jo.postServiceLocked ? "View post-service record." : "Edit post-service record."}
+            onPress={canOpenPostService(jo) ? () => openForm(jo.id) : undefined}
+            footer={<CardFooter jobOrder={jo} record={records[jo.id]} onEdit={() => openForm(jo.id)} />}
           />
         ))
       )}
@@ -169,6 +196,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   submittedText: { fontSize: 14, fontWeight: "700", color: COLORS.success },
+  submittedCol: { flexShrink: 1, gap: 4 },
+  sendState: { fontSize: 13, color: "#7a5a00" },
+  sendStateError: { color: COLORS.danger },
+  secondaryButton: {
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.navy,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  secondaryButtonText: { color: COLORS.navy, fontSize: 14, fontWeight: "700" },
   footerNote: { flex: 1, fontSize: 14, lineHeight: 19, color: COLORS.muted },
   editButton: {
     minHeight: 44,

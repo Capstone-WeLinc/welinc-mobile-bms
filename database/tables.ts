@@ -1,5 +1,5 @@
 export const DATABASE_NAME = "bms_mobile.db";
-export const DATABASE_VERSION = 4;
+export const DATABASE_VERSION = 5;
 
 // Row shapes as stored in SQLite. Booleans are 0/1 and arrays/objects are JSON text.
 // Repositories convert these to and from the app types in types/bms.ts.
@@ -32,6 +32,7 @@ export interface JobOrderRow {
   paymentMethod: string;
   charges: string;
   downPayment: number;
+  postServiceLocked: number;
   updatedAt: string;
 }
 
@@ -47,6 +48,9 @@ export interface PostServiceRecordRow {
   issueDetails: string;
   submittedAt: string;
   syncPending: number;
+  syncBlocked: number;
+  lastError: string | null;
+  baseVersion: string | null;
 }
 
 export interface WeeklyAvailabilityRow {
@@ -102,7 +106,10 @@ export const POST_SERVICE_RECORDS_COLUMNS_SQL = `
     issueReported INTEGER NOT NULL DEFAULT 0 CHECK (issueReported IN (0, 1)),
     issueDetails TEXT NOT NULL DEFAULT '',
     submittedAt TEXT NOT NULL,
-    syncPending INTEGER NOT NULL DEFAULT 1 CHECK (syncPending IN (0, 1))
+    syncPending INTEGER NOT NULL DEFAULT 1 CHECK (syncPending IN (0, 1)),
+    syncBlocked INTEGER NOT NULL DEFAULT 0 CHECK (syncBlocked IN (0, 1)),
+    lastError TEXT,
+    baseVersion TEXT
 `;
 
 // This SQL contains no user input. Values are always written with bound parameters.
@@ -138,6 +145,7 @@ export const CREATE_TABLES_SQL = `
     paymentMethod TEXT NOT NULL DEFAULT '',
     charges TEXT NOT NULL DEFAULT '[]',
     downPayment REAL NOT NULL DEFAULT 0 CHECK (downPayment >= 0),
+    postServiceLocked INTEGER NOT NULL DEFAULT 0 CHECK (postServiceLocked IN (0, 1)),
     updatedAt TEXT NOT NULL
   );
 
