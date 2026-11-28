@@ -2,7 +2,7 @@ import type { AppNotification, TeamMember, JobOrder } from "../types/bms";
 import { isAssignedTo } from "../utils/assignments";
 import { formatDayMonth, formatTime12h } from "../utils/dates";
 
-// TODO: replace with the signed-in user's notifications from the BMS backend (and push notifications).
+// Seeder mode only. A real sign-in reads the BMS notifications instead (spec bms/0023).
 
 const ADMIN = "Admin Dela Rosa";
 

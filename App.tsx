@@ -64,6 +64,8 @@ export default function App() {
   const unreadCount = useUnreadCount();
   const loadNotificationsFor = useNotificationsStore((s) => s.loadForUser);
   const refreshJobOrders = useJobOrdersStore((s) => s.refresh);
+  /** Job orders, then the notifications about them (spec bms/0023). */
+  const refreshAll = useNotificationsStore((s) => s.refresh);
   const loadAvailabilityFor = useAvailabilityStore((s) => s.loadForUser);
   // Post Service Completion is for drivers only.
   const isDriver = user?.role === "driver";
@@ -88,28 +90,29 @@ export default function App() {
   }, [user, restoring, databaseError, refreshJobOrders, loadAvailabilityFor, loadNotificationsFor]);
 
   // Sync again whenever the app comes back to the foreground (e.g. after the driver regains signal).
+  // The notifications refresh syncs job orders first, then the notices about them (spec bms/0023).
   useEffect(() => {
     if (!user || restoring || databaseError) return;
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") void refreshJobOrders();
+      if (state === "active") void refreshAll();
     });
     return () => subscription.remove();
-  }, [user, restoring, databaseError, refreshJobOrders]);
+  }, [user, restoring, databaseError, refreshAll]);
 
   // Spec bms/0022: send waiting forms as soon as the phone is online again (mobile data or Wi-Fi),
-  // and refresh every 45 seconds while the app is open, so new job orders show up almost live.
-  // Seeder accounts have no server, so neither runs for them.
+  // and refresh every 45 seconds while the app is open, so new job orders and their notifications
+  // show up almost live. Seeder accounts have no server, so neither runs for them.
   useEffect(() => {
     if (!user || restoring || databaseError || USE_SEEDER_AUTH) return;
     let wasOnline: boolean | null = null;
     const unsubscribe = NetInfo.addEventListener((state) => {
       const online = state.isConnected === true && state.isInternetReachable !== false;
-      if (online && wasOnline === false) void refreshJobOrders();
+      if (online && wasOnline === false) void refreshAll();
       wasOnline = online;
     });
     let timer: ReturnType<typeof setInterval> | null = null;
     const startTimer = () => {
-      if (!timer) timer = setInterval(() => void refreshJobOrders(), AUTO_REFRESH_MS);
+      if (!timer) timer = setInterval(() => void refreshAll(), AUTO_REFRESH_MS);
     };
     const stopTimer = () => {
       if (timer) clearInterval(timer);
@@ -122,7 +125,7 @@ export default function App() {
       appState.remove();
       stopTimer();
     };
-  }, [user, restoring, databaseError, refreshJobOrders]);
+  }, [user, restoring, databaseError, refreshAll]);
 
   // Open the local SQLite database, and sign back in automatically if a session was saved on this phone.
   useEffect(() => {

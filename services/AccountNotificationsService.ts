@@ -7,7 +7,7 @@ import { authService } from "./AuthService";
  * token may read its own events, the bms-mobile one included. `createdAt` is the server's time,
  * so the app shows the same date and time as the portal.
  *
- * Job order notifications (assignments, reminders) need BMS backend routes that don't exist yet.
+ * Job order notifications come from BmsNotificationsService and utils/jobOrderNotices (spec bms/0023).
  */
 
 type ActorKind = "SELF" | "ADMIN" | "SYSTEM";
