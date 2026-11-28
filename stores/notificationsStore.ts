@@ -5,7 +5,9 @@ import { getSeederNotifications } from "../seeders/notifications";
 import { NotificationRepository } from "../repositories/NotificationRepository";
 import { fetchAccountNotifications } from "../services/AccountNotificationsService";
 import { USE_SEEDER_AUTH } from "../services/AuthService";
+import { fetchBmsNotifications, sendRead, sendReadAll } from "../services/BmsNotificationsService";
 import type { AppNotification, TeamRole, TeamMember } from "../types/bms";
+import { buildJobOrderNotices } from "../utils/jobOrderNotices";
 import { useJobOrdersStore } from "./jobOrdersStore";
 
 type NotificationsState = {
@@ -28,31 +30,57 @@ function seederNotificationsFor(user: TeamMember): AppNotification[] {
 
 /**
  * Pull this user's notifications into SQLite. Read flags already set on this phone are kept.
- * Seeder sign-in uses the seeder list; a real sign-in uses the account's own activity from
- * shared auth, so dates match the portal. If the server can't be reached, the saved list stays.
+ * Seeder sign-in uses the seeder list. A real sign-in (spec bms/0023) combines three sources, each
+ * replaced on its own so one failing never removes the others:
+ * - `account-`: the account's own activity from shared auth (spec 0020), so dates match the portal;
+ * - `bms-`: job order notices from `GET /bms/notifications`, worded by the app;
+ * - `local-`: reminders and "marked completed", built from the job orders on the phone.
  */
 async function syncForUser(user: TeamMember): Promise<void> {
-  let incoming: AppNotification[];
-  if (USE_SEEDER_AUTH) {
-    incoming = seederNotificationsFor(user);
-  } else {
-    try {
-      // TODO: add job order notifications once the BMS backend has team member routes.
-      incoming = await fetchAccountNotifications(user);
-    } catch (error) {
-      console.warn("[Notifications] Could not load account notifications; showing the saved list", error);
-      return;
-    }
-  }
   const db = await getDatabase();
+  if (USE_SEEDER_AUTH) {
+    const incoming = seederNotificationsFor(user);
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await new NotificationRepository(txn).reconcileForUser(user.id, incoming);
+    });
+    return;
+  }
+
+  // Tell the server about reads made offline first, so they don't come back unread.
+  const repository = new NotificationRepository(db);
+  const pending = await repository.getPendingBmsReads(user.id);
+  const sent: string[] = [];
+  for (const id of pending) if (await sendRead(id)) sent.push(id);
+  if (sent.length) await repository.clearPendingReads(user.id, sent);
+
+  const jobOrders = useJobOrdersStore.getState().jobOrders;
+  const [account, bms] = await Promise.allSettled([fetchAccountNotifications(user), fetchBmsNotifications(user, jobOrders)]);
+  if (account.status === "rejected") console.warn("[Notifications] Account notifications unavailable; keeping the saved ones", account.reason);
+  if (bms.status === "rejected") console.warn("[Notifications] Job order notifications unavailable; keeping the saved ones", bms.reason);
+  const local = buildJobOrderNotices(user, jobOrders);
+
   await db.withExclusiveTransactionAsync(async (txn) => {
-    await new NotificationRepository(txn).reconcileForUser(user.id, incoming);
+    const sources = new NotificationRepository(txn);
+    if (account.status === "fulfilled") await sources.reconcileSource(user.id, "account-", account.value);
+    if (bms.status === "fulfilled") await sources.reconcileSource(user.id, "bms-", bms.value);
+    await sources.reconcileSource(user.id, "local-", local);
   });
+}
+
+/** Sends one read to the server in the background; if it fails it stays pending for the next sync. */
+function sendReadInBackground(userId: string, ids: string[], all: boolean) {
+  if (USE_SEEDER_AUTH || !ids.length) return;
+  void (async () => {
+    const ok = all ? await sendReadAll() : await sendRead(ids[0]);
+    if (ok) await new NotificationRepository(await getDatabase()).clearPendingReads(userId, ids);
+  })().catch((error) => console.warn("[Notifications] Read not sent yet; will retry on the next sync", error));
 }
 
 async function readForUser(userId: string): Promise<AppNotification[]> {
   return new NotificationRepository(await getDatabase()).getForUser(userId);
 }
+
+let refreshing: Promise<void> | null = null;
 
 export const useNotificationsStore = create<NotificationsState>((set, get) => {
   /** Apply a change to the current user's list in memory. */
@@ -86,28 +114,46 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => {
       set({ byUser: { ...get().byUser, [user.id]: list } });
     },
 
-    refresh: async () => {
-      const { user } = get();
-      if (!user) return;
-      await syncForUser(user);
-      const list = await readForUser(user.id);
-      if (get().user?.id !== user.id) return;
-      set({ byUser: { ...get().byUser, [user.id]: list } });
+    refresh: () => {
+      // Concurrent refreshes (timer, reconnect, pull to refresh) share one run.
+      if (!refreshing) {
+        refreshing = (async () => {
+          // Job orders first, so notices are worded and built from the newest ones (spec bms/0023).
+          await useJobOrdersStore.getState().refresh();
+          const { user } = get();
+          if (!user) return;
+          await syncForUser(user);
+          const list = await readForUser(user.id);
+          if (get().user?.id !== user.id) return;
+          set({ byUser: { ...get().byUser, [user.id]: list } });
+        })().finally(() => {
+          refreshing = null;
+        });
+      }
+      return refreshing;
     },
 
     markRead: (id) => {
       const { user } = get();
       if (!user) return;
+      const wasUnread = (get().byUser[user.id] ?? EMPTY).some((n) => n.id === id && !n.read);
       updateCurrent((list) => list.map((n) => (n.id === id ? { ...n, read: true } : n)));
-      // Saved with readSyncPending = 1. TODO: tell the backend this notification was read.
-      persist((repository) => repository.markRead(user.id, id));
+      // Saved with readSyncPending = 1; a BMS notice is then sent to the server (spec bms/0023).
+      persist(async (repository) => {
+        await repository.markRead(user.id, id);
+        if (wasUnread && id.startsWith("bms-")) sendReadInBackground(user.id, [id], false);
+      });
     },
 
     markAllRead: () => {
       const { user } = get();
       if (!user) return;
+      const unreadBms = (get().byUser[user.id] ?? EMPTY).filter((n) => !n.read && n.id.startsWith("bms-")).map((n) => n.id);
       updateCurrent((list) => list.map((n) => ({ ...n, read: true })));
-      persist((repository) => repository.markAllRead(user.id));
+      persist(async (repository) => {
+        await repository.markAllRead(user.id);
+        sendReadInBackground(user.id, unreadBms, true);
+      });
     },
   };
 });
