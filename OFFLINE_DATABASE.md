@@ -35,27 +35,37 @@ only admits `DRIVER` and `HELPER` accounts (`services/AuthService.ts`,
 - Sign-out ends the session on the server (`POST /auth/logout`).
 - Forgot password: `POST /auth/forgot-password` → `/auth/verify-otp` → `/auth/reset-password`.
 
-**Sync** (`services/SyncService.ts`) runs on sign-in, on pull-to-refresh, when the
-app returns to the foreground and right after a post-service form is saved:
+**Sync** (`services/SyncService.ts`, spec bms/0022) runs on sign-in, on pull-to-refresh,
+when the app returns to the foreground, right after a post-service form is saved, when
+the phone gets internet back (NetInfo), and every 45 seconds while the app is open:
 
-1. **Upload**: every `post_service_records` row with `syncPending = 1` is sent; on
-   success the flag is cleared. Records the server refuses stay queued for the next sync.
-2. **Download**: the team member's distributed job orders replace the `job_orders`
-   snapshot in one transaction.
+1. **Upload** (drivers): every `post_service_records` row with `syncPending = 1` and
+   `syncBlocked = 0` is sent to `PUT /bms/post-service/mine/:bookingUuid` with its
+   `baseVersion`. On success the flag is cleared and `baseVersion` becomes the answer's `version`.
+2. **Download**: `GET /bms/job-order/mine` (and for drivers `GET /bms/post-service/mine`
+   for the submitted and finalized flags) replaces the `job_orders` snapshot in one
+   transaction. A failed download leaves the cache as it was.
 
-> The BMS backend has **no driver/helper routes for job orders and post-service yet**.
-> Until it does, `TEAM_JOB_ORDER_ROUTES_READY` in `SyncService.ts` is `false`: the
-> sync sends and downloads nothing, saved forms stay queued on the phone, and a
-> real account sees no job orders. Turn it on when those routes are merged.
+When an upload is refused:
+
+| Answer | The record |
+| --- | --- |
+| No connection | Stays queued |
+| 409 (job order not ready), 404, 5xx | Stays queued with `lastError`, retried next sync |
+| 409 `POST_SERVICE_CHANGED` | Replaced by the office's version (`current`), no longer queued, `lastError` explains why |
+| 409 `POST_SERVICE_FINALIZED`, 400, 403 | `syncBlocked = 1` with `lastError`; not retried until the driver submits again |
+
+Each update is matched on `submittedAt`, so a form submitted again while an upload
+is running stays queued. `job_orders.postServiceLocked = 1` makes the form read-only.
 
 Offline, both steps are skipped and the screens show the SQLite cache. A refused
 session returns the app to sign-in but keeps the local data.
 
 | Connected to the server | Still on the phone only |
 | --- | --- |
-| Sign-in, email code, forgot password, sign-out | Job orders and post-service (waiting for BMS routes) |
-| Profile name and mobile number, change password | Weekly availability, leave requests (Dispatch has `/bms/crew-leave/self`; app screen not connected yet) |
-| | Notifications (built on the phone from job orders) |
+| Sign-in, email code, forgot password, sign-out | Weekly availability, leave requests (Dispatch has `/bms/crew-leave/self`; app screen not connected yet) |
+| Profile name and mobile number, change password | Notifications (built on the phone from job orders) |
+| Job orders, post-service forms (spec bms/0022) | |
 
 Local data is kept on sign-out, so unsent records survive until the same user
 signs in again. When a **different** user signs in, `SyncService.prepareFor`

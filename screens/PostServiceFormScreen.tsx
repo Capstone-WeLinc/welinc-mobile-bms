@@ -20,6 +20,20 @@ import { formatPeso, getPaymentBreakdown } from "../utils/money";
 
 type FieldKey = "arrival" | "notes" | "issue";
 
+/**
+ * Where this record stands with the server (spec bms/0022), shown at the top of the form.
+ * Null when there is nothing to say (sent, or never submitted).
+ */
+export function syncNotice(record: PostServiceRecord | undefined, locked: boolean): { tone: "info" | "warning" | "error"; text: string } | null {
+  if (locked) return { tone: "info", text: "Finalized by office. This record can no longer be changed." };
+  if (!record) return null;
+  if (record.syncBlocked) return { tone: "error", text: `Not sent: ${record.lastError ?? "the server refused this record"}. Fix it and submit again.` };
+  if (record.syncPending && record.lastError) return { tone: "warning", text: `Not sent yet: ${record.lastError} It will be retried automatically.` };
+  if (record.syncPending) return { tone: "warning", text: "Saved on this phone. It will be sent when you're online." };
+  if (record.lastError) return { tone: "info", text: record.lastError };
+  return null;
+}
+
 function Checkbox({ checked }: { checked: boolean }) {
   return <View style={[styles.checkbox, checked && styles.checkboxChecked]}>{checked ? <CheckIcon size={15} /> : null}</View>;
 }
@@ -83,6 +97,9 @@ export function PostServiceFormScreen({
   const [picker, setPicker] = useState<"paymentMethod" | "addOnPayment" | null>(null);
   const [triedSubmit, setTriedSubmit] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Finalized on the web: the driver can only read the record (spec bms/0022).
+  const readOnly = jobOrder.postServiceLocked;
+  const notice = syncNotice(existingRecord, readOnly);
 
   const minuteRef = useRef<TextInput>(null);
 
@@ -141,6 +158,7 @@ export function PostServiceFormScreen({
     setAddOnKeys((current) => (current.includes(key) ? current.filter((k) => k !== key) : [...current, key]));
 
   const submit = async () => {
+    if (readOnly) return;
     setTriedSubmit(true);
     if (hasErrors || !arrivalTime || !paymentMethod) {
       scrollRef.current?.scrollTo({ y: 0, animated: true });
@@ -172,7 +190,7 @@ export function PostServiceFormScreen({
           <ChevronIcon size={16} direction="left" color={COLORS.text} strokeWidth={2.4} />
         </TouchableOpacity>
         <View style={styles.headerText}>
-          <Text style={styles.title}>Edit Post-Service Record</Text>
+          <Text style={styles.title}>{readOnly ? "Post-Service Record" : "Edit Post-Service Record"}</Text>
           <Text style={styles.jobOrderNumber}>{jobOrder.jobOrderNumber}</Text>
         </View>
       </View>
@@ -228,9 +246,20 @@ export function PostServiceFormScreen({
           </View>
         </View>
 
-        <View style={styles.savedBanner}>
-          <Text style={styles.savedBannerText}>Submitting this record will mark the job order as Done.</Text>
-        </View>
+        {notice ? (
+          <View style={[styles.notice, styles[`notice_${notice.tone}`]]} accessibilityRole="alert">
+            <Text style={[styles.noticeText, styles[`noticeText_${notice.tone}`]]}>{notice.text}</Text>
+          </View>
+        ) : null}
+
+        {readOnly ? null : (
+          <View style={styles.savedBanner}>
+            <Text style={styles.savedBannerText}>Submitting this record will mark the job order as Done.</Text>
+          </View>
+        )}
+
+        {/* Every field below is locked once the office finalizes the record. */}
+        <View pointerEvents={readOnly ? "none" : "auto"} style={readOnly ? styles.readOnly : undefined}>
 
         {/* Service completed */}
         <TouchableOpacity
@@ -404,19 +433,23 @@ export function PostServiceFormScreen({
           </View>
         ) : null}
 
+        </View>
+
         {triedSubmit && hasErrors ? (
           <Text style={[styles.errorText, styles.submitError]}>Please complete the required fields above.</Text>
         ) : null}
 
-        <View style={styles.submitRow}>
-          <TouchableOpacity
-            style={[styles.submitButton, submitting && styles.buttonDisabled]}
-            onPress={() => void submit()}
-            disabled={submitting}
-          >
-            <Text style={styles.submitText}>{submitting ? "Submitting..." : "Submit"}</Text>
-          </TouchableOpacity>
-        </View>
+        {readOnly ? null : (
+          <View style={styles.submitRow}>
+            <TouchableOpacity
+              style={[styles.submitButton, submitting && styles.buttonDisabled]}
+              onPress={() => void submit()}
+              disabled={submitting}
+            >
+              <Text style={styles.submitText}>{submitting ? "Submitting..." : "Submit"}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
 
       <OptionPickerModal
@@ -485,6 +518,16 @@ const styles = StyleSheet.create({
 
   savedBanner: { marginTop: 12, backgroundColor: COLORS.navySoft, borderRadius: 10, padding: 12 },
   savedBannerText: { color: COLORS.navy, fontSize: 14, fontWeight: "600" },
+
+  notice: { marginTop: 12, borderRadius: 10, padding: 12, borderWidth: 1 },
+  notice_info: { backgroundColor: COLORS.navySoft, borderColor: COLORS.navySoft },
+  notice_warning: { backgroundColor: "#fff8e6", borderColor: "#f1d48a" },
+  notice_error: { backgroundColor: "#fdecec", borderColor: "#f2b8b8" },
+  noticeText: { fontSize: 14, lineHeight: 20, fontWeight: "600" },
+  noticeText_info: { color: COLORS.navy },
+  noticeText_warning: { color: "#7a5a00" },
+  noticeText_error: { color: COLORS.danger },
+  readOnly: { opacity: 0.6 },
 
   checkRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 52, marginTop: 14 },
   checkLabel: { flex: 1, fontSize: 17, color: COLORS.text },
